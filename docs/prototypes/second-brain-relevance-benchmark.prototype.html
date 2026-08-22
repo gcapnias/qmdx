@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QMDX relevance benchmark prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211b;
+      --muted: #647067;
+      --paper: #f7f5ef;
+      --panel: #ffffff;
+      --line: #d9ddd8;
+      --accent: #176b4d;
+      --accent-soft: #e4f2eb;
+      --warning: #8a4b12;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1180px, calc(100% - 32px)); margin: 36px auto 80px; }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { margin-bottom: 8px; }
+    h2 { margin-top: 0; font-size: 1.25rem; }
+    p { max-width: 80ch; }
+    button, input, select { font: inherit; }
+    button {
+      border: 1px solid var(--accent);
+      border-radius: 7px;
+      padding: 8px 12px;
+      color: var(--accent);
+      background: white;
+      cursor: pointer;
+    }
+    button:hover, button.active { color: white; background: var(--accent); }
+    button.secondary { border-color: var(--line); color: var(--ink); }
+    button.secondary:hover { background: var(--accent-soft); color: var(--ink); }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      background: white;
+    }
+    .intro { margin-bottom: 28px; }
+    .notice {
+      border-left: 4px solid var(--warning);
+      padding: 10px 14px;
+      background: #fff8ee;
+      color: #5d3713;
+    }
+    .panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 20px;
+      background: var(--panel);
+      box-shadow: 0 2px 8px rgb(23 33 27 / 5%);
+    }
+    .toolbar, .tabs, .grade-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .state-grid, .rankings, .query-editor {
+      display: grid;
+      gap: 16px;
+    }
+    .state-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    .rankings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .query-editor { grid-template-columns: 1fr 130px 180px; align-items: end; }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfa;
+    }
+    .stat strong { display: block; font-size: 1.45rem; }
+    .muted { color: var(--muted); }
+    .query-list, .ranking-list { list-style: none; margin: 12px 0 0; padding: 0; }
+    .query-list li, .result {
+      border-top: 1px solid var(--line);
+      padding: 12px 0;
+    }
+    .query-list li:first-child, .result:first-child { border-top: 0; }
+    .query-meta, .result-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: .88rem;
+    }
+    .pill {
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .ranking-column {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .ranking-column h3 { margin: 0; }
+    .result-title { font-weight: 650; }
+    .grade-buttons { margin-top: 8px; }
+    .grade-buttons button { min-width: 38px; padding: 5px 8px; }
+    .grade-buttons button.selected { color: white; background: var(--accent); }
+    .walkthrough { display: none; }
+    .walkthrough.active { display: block; }
+    .step {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+    }
+    .step:first-of-type { border-top: 0; }
+    .step.done { opacity: .55; }
+    .verdict {
+      margin-top: 12px;
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--accent-soft);
+    }
+    code { font-size: .9em; }
+    @media (max-width: 760px) {
+      .rankings, .query-editor { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="intro">
+      <h1>QMDX relevance benchmark workbench</h1>
+      <p>
+        This throwaway prototype asks whether a representative benchmark should combine real
+        query archetypes, four-level document judgments, and a blinded side-by-side comparison
+        before revealing pipeline identities.
+      </p>
+      <p class="notice">
+        Prototype only. The sample queries and documents are conversation prompts, not approved
+        benchmark data. Replace them with queries you have genuinely asked of your second brain.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Current benchmark state</h2>
+      <div id="state-summary" class="state-grid"></div>
+      <div id="state-verdict" class="verdict"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Free play</h2>
+      <div class="toolbar">
+        <button data-action="seed-balanced">Seed balanced query set</button>
+        <button data-action="seed-easy">Seed only easy lookups</button>
+        <button data-action="clear" class="secondary">Clear benchmark</button>
+        <button data-action="grade-demo" class="secondary">Apply sample judgments</button>
+        <button data-action="toggle-reveal" class="secondary">Reveal / hide pipelines</button>
+      </div>
+
+      <h3>Add a real query</h3>
+      <div class="query-editor">
+        <label>
+          Query
+          <input id="query-text" value="What did I decide about retry behavior for external APIs?">
+        </label>
+        <label>
+          Language
+          <select id="query-language">
+            <option value="English">English</option>
+            <option value="Greek">Greek</option>
+            <option value="Mixed">Mixed</option>
+          </select>
+        </label>
+        <label>
+          Intent
+          <select id="query-archetype">
+            <option value="Known item">Known item</option>
+            <option value="Topic synthesis">Topic synthesis</option>
+            <option value="Decision recall">Decision recall</option>
+            <option value="Exact phrase">Exact phrase</option>
+            <option value="Exploratory">Exploratory</option>
+          </select>
+        </label>
+      </div>
+      <p><button data-action="add-query">Add query</button></p>
+      <ul id="query-list" class="query-list"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Blinded comparison</h2>
+      <p class="muted">
+        Grade usefulness before revealing which column is stock QMD and which is QMDX. Grades:
+        0 irrelevant, 1 related, 2 useful, 3 direct answer.
+      </p>
+      <div id="rankings" class="rankings"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Guided walkthroughs</h2>
+      <div id="tabs" class="tabs"></div>
+      <div id="walkthroughs"></div>
+    </section>
+  </main>
+
+  <script>
+    const BenchmarkModel = (() => {
+      const balancedQueries = [
+        {
+          id: "q1",
+          text: "What did I decide about retry behavior for external APIs?",
+          language: "English",
+          archetype: "Decision recall"
+        },
+        {
+          id: "q2",
+          text: "Ποιες σημειώσεις συνδέουν την ανάκτηση πληροφοριών με τα εργαλεία για agents;",
+          language: "Greek",
+          archetype: "Topic synthesis"
+        },
+        {
+          id: "q3",
+          text: "\"position-aware blend\"",
+          language: "English",
+          archetype: "Exact phrase"
+        },
+        {
+          id: "q4",
+          text: "Ideas related to keeping local data private while using hosted models",
+          language: "English",
+          archetype: "Exploratory"
+        },
+        {
+          id: "q5",
+          text: "Where is the note containing the QMD database path?",
+          language: "English",
+          archetype: "Known item"
+        }
+      ];
+
+      const easyQueries = [
+        {
+          id: "q1",
+          text: "\"QMD Integration Seams and Search Semantics\"",
+          language: "English",
+          archetype: "Exact phrase"
+        },
+        {
+          id: "q2",
+          text: "qmd-integration-seams-and-search-semantics.md",
+          language: "English",
+          archetype: "Known item"
+        }
+      ];
+
+      const rankings = {
+        A: [
+          { id: "d1", title: "API reliability decisions", path: "notes/architecture/api-reliability.md" },
+          { id: "d2", title: "Remote inference comparison", path: "docs/research/remote-inference.md" },
+          { id: "d3", title: "Weekly log — provider outage", path: "journal/2026-07-13.md" }
+        ],
+        B: [
+          { id: "d2", title: "Remote inference comparison", path: "docs/research/remote-inference.md" },
+          { id: "d3", title: "Weekly log — provider outage", path: "journal/2026-07-13.md" },
+          { id: "d1", title: "API reliability decisions", path: "notes/architecture/api-reliability.md" }
+        ]
+      };
+
+      const initialState = () => ({
+        queries: [],
+        judgments: {},
+        rankings,
+        revealed: false,
+        lastChange: "No benchmark choices have been made.",
+        walkthroughProgress: {}
+      });
+
+      function reducer(state, action) {
+        switch (action.type) {
+          case "SEED_BALANCED":
+            return {
+              ...initialState(),
+              queries: balancedQueries,
+              lastChange: "Added five query archetypes, including Greek and exploratory search."
+            };
+          case "SEED_EASY":
+            return {
+              ...initialState(),
+              queries: easyQueries,
+              lastChange: "Added only exact and known-item queries; this benchmark is intentionally biased."
+            };
+          case "CLEAR":
+            return initialState();
+          case "ADD_QUERY":
+            if (!action.query.text.trim()) return state;
+            return {
+              ...state,
+              queries: [
+                ...state.queries,
+                { ...action.query, id: `q${state.queries.length + 1}` }
+              ],
+              lastChange: `Added a ${action.query.archetype.toLowerCase()} query.`
+            };
+          case "GRADE":
+            return {
+              ...state,
+              judgments: {
+                ...state.judgments,
+                [action.documentId]: action.grade
+              },
+              lastChange: `Graded ${action.documentId} as ${action.grade} of 3.`
+            };
+          case "GRADE_DEMO":
+            return {
+              ...state,
+              judgments: { d1: 3, d2: 1, d3: 2 },
+              lastChange: "Applied one shared set of sample relevance judgments."
+            };
+          case "TOGGLE_REVEAL":
+            return {
+              ...state,
+              revealed: !state.revealed,
+              lastChange: state.revealed
+                ? "Pipeline identities are hidden again."
+                : "Pipeline identities are now visible."
+            };
+          case "WALKTHROUGH_STEP":
+            return {
+              ...reducer(state, action.innerAction),
+              walkthroughProgress: {
+                ...state.walkthroughProgress,
+                [action.walkthroughId]: action.stepIndex + 1
+              }
+            };
+          default:
+            return state;
+        }
+      }
+
+      function discountedGain(ranking, judgments) {
+        return ranking.reduce((score, document, index) => {
+          const grade = judgments[document.id] ?? 0;
+          return score + (Math.pow(2, grade) - 1) / Math.log2(index + 2);
+        }, 0);
+      }
+
+      function ndcg(ranking, judgments) {
+        const actual = discountedGain(ranking, judgments);
+        const ideal = [...ranking].sort(
+          (left, right) => (judgments[right.id] ?? 0) - (judgments[left.id] ?? 0)
+        );
+        const best = discountedGain(ideal, judgments);
+        return best === 0 ? null : actual / best;
+      }
+
+      function coverage(queries) {
+        const archetypes = new Set(queries.map(query => query.archetype));
+        const languages = new Set(queries.map(query => query.language));
+        return {
+          archetypes: archetypes.size,
+          languages: languages.size,
+          representative:
+            queries.length >= 5 &&
+            archetypes.size >= 4 &&
+            languages.size >= 2
+        };
+      }
+
+      return { initialState, reducer, ndcg, coverage };
+    })();
+
+    let state = BenchmarkModel.initialState();
+
+    const walkthroughs = [
+      {
+        id: "bias",
+        title: "Expose an easy-query benchmark",
+        description:
+          "See why filenames and exact phrases alone make both pipelines look healthier than real use.",
+        steps: [
+          { label: "Start with easy lookups", action: { type: "SEED_EASY" } },
+          { label: "Apply sample judgments", action: { type: "GRADE_DEMO" } },
+          { label: "Reveal pipeline identities", action: { type: "TOGGLE_REVEAL" } }
+        ]
+      },
+      {
+        id: "balanced",
+        title: "Build representative coverage",
+        description:
+          "Mix lookup, synthesis, decision recall, exploratory, and multilingual queries before comparing.",
+        steps: [
+          { label: "Seed balanced query set", action: { type: "SEED_BALANCED" } },
+          { label: "Apply sample judgments", action: { type: "GRADE_DEMO" } },
+          { label: "Reveal pipeline identities", action: { type: "TOGGLE_REVEAL" } }
+        ]
+      },
+      {
+        id: "blind",
+        title: "Avoid evaluator bias",
+        description:
+          "Grade the same document pool while pipeline identities are hidden, then reveal the result.",
+        steps: [
+          { label: "Reset with balanced queries", action: { type: "SEED_BALANCED" } },
+          { label: "Record judgments first", action: { type: "GRADE_DEMO" } },
+          { label: "Reveal only after grading", action: { type: "TOGGLE_REVEAL" } }
+        ]
+      }
+    ];
+
+    let activeWalkthrough = walkthroughs[0].id;
+
+    function dispatch(action) {
+      state = BenchmarkModel.reducer(state, action);
+      render();
+    }
+
+    function formatScore(value) {
+      return value === null ? "Not graded" : value.toFixed(3);
+    }
+
+    function renderSummary() {
+      const coverage = BenchmarkModel.coverage(state.queries);
+      const gradedCount = Object.keys(state.judgments).length;
+      const scoreA = BenchmarkModel.ndcg(state.rankings.A, state.judgments);
+      const scoreB = BenchmarkModel.ndcg(state.rankings.B, state.judgments);
+      document.querySelector("#state-summary").innerHTML = `
+        <div class="stat"><strong>${state.queries.length}</strong><span>real query slots</span></div>
+        <div class="stat"><strong>${coverage.archetypes}/5</strong><span>intent archetypes</span></div>
+        <div class="stat"><strong>${coverage.languages}</strong><span>languages</span></div>
+        <div class="stat"><strong>${gradedCount}/3</strong><span>documents graded</span></div>
+        <div class="stat"><strong>${formatScore(scoreA)}</strong><span>${state.revealed ? "stock QMD" : "pipeline A"} nDCG</span></div>
+        <div class="stat"><strong>${formatScore(scoreB)}</strong><span>${state.revealed ? "QMDX candidate" : "pipeline B"} nDCG</span></div>
+      `;
+      const warnings = [];
+      if (state.queries.length < 5) warnings.push("fewer than five query intents");
+      if (coverage.archetypes < 4) warnings.push("narrow intent coverage");
+      if (coverage.languages < 2) warnings.push("no multilingual pressure");
+      if (gradedCount < 3) warnings.push("incomplete document judgments");
+      document.querySelector("#state-verdict").innerHTML = `
+        <strong>${coverage.representative ? "Shape looks representative." : "Shape is not representative yet."}</strong>
+        ${warnings.length ? `Watch: ${warnings.join(", ")}.` : "It now exercises varied intent and language."}
+        <div class="muted">${state.lastChange}</div>
+      `;
+    }
+
+    function renderQueries() {
+      const list = document.querySelector("#query-list");
+      list.innerHTML = state.queries.length
+        ? state.queries.map(query => `
+            <li>
+              <strong>${escapeHtml(query.text)}</strong>
+              <div class="query-meta">
+                <span class="pill">${query.archetype}</span>
+                <span>${query.language}</span>
+              </div>
+            </li>
+          `).join("")
+        : "<li class=\"muted\">No real queries selected.</li>";
+    }
+
+    function renderRankings() {
+      document.querySelector("#rankings").innerHTML = ["A", "B"].map(key => {
+        const identity = key === "A" ? "stock QMD" : "QMDX candidate";
+        return `
+          <div class="ranking-column">
+            <h3>${state.revealed ? identity : `Pipeline ${key}`}</h3>
+            <div class="muted">nDCG: ${formatScore(BenchmarkModel.ndcg(state.rankings[key], state.judgments))}</div>
+            <ol class="ranking-list">
+              ${state.rankings[key].map((document, index) => `
+                <li class="result">
+                  <div class="result-title">${index + 1}. ${document.title}</div>
+                  <div class="result-meta"><code>${document.path}</code></div>
+                  <div class="grade-buttons" aria-label="Relevance grade for ${document.title}">
+                    ${[0, 1, 2, 3].map(grade => `
+                      <button
+                        class="secondary ${state.judgments[document.id] === grade ? "selected" : ""}"
+                        data-grade-document="${document.id}"
+                        data-grade="${grade}"
+                      >${grade}</button>
+                    `).join("")}
+                  </div>
+                </li>
+              `).join("")}
+            </ol>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderWalkthroughs() {
+      document.querySelector("#tabs").innerHTML = walkthroughs.map(walkthrough => `
+        <button
+          class="${activeWalkthrough === walkthrough.id ? "active" : ""}"
+          data-tab="${walkthrough.id}"
+        >${walkthrough.title}</button>
+      `).join("");
+
+      document.querySelector("#walkthroughs").innerHTML = walkthroughs.map(walkthrough => {
+        const progress = state.walkthroughProgress[walkthrough.id] ?? 0;
+        return `
+          <div class="walkthrough ${activeWalkthrough === walkthrough.id ? "active" : ""}">
+            <p>${walkthrough.description}</p>
+            ${walkthrough.steps.map((step, index) => `
+              <div class="step ${index < progress ? "done" : ""}">
+                <button
+                  data-walkthrough="${walkthrough.id}"
+                  data-step="${index}"
+                  ${index > progress ? "disabled" : ""}
+                >${index < progress ? "Done" : "Do this"}</button>
+                <span><strong>Step ${index + 1}:</strong> ${step.label}</span>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }).join("");
+    }
+
+    function render() {
+      renderSummary();
+      renderQueries();
+      renderRankings();
+      renderWalkthroughs();
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;"
+      })[character]);
+    }
+
+    document.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+
+      if (button.dataset.action === "seed-balanced") dispatch({ type: "SEED_BALANCED" });
+      if (button.dataset.action === "seed-easy") dispatch({ type: "SEED_EASY" });
+      if (button.dataset.action === "clear") dispatch({ type: "CLEAR" });
+      if (button.dataset.action === "grade-demo") dispatch({ type: "GRADE_DEMO" });
+      if (button.dataset.action === "toggle-reveal") dispatch({ type: "TOGGLE_REVEAL" });
+      if (button.dataset.action === "add-query") {
+        dispatch({
+          type: "ADD_QUERY",
+          query: {
+            text: document.querySelector("#query-text").value,
+            language: document.querySelector("#query-language").value,
+            archetype: document.querySelector("#query-archetype").value
+          }
+        });
+      }
+      if (button.dataset.gradeDocument) {
+        dispatch({
+          type: "GRADE",
+          documentId: button.dataset.gradeDocument,
+          grade: Number(button.dataset.grade)
+        });
+      }
+      if (button.dataset.tab) {
+        activeWalkthrough = button.dataset.tab;
+        render();
+      }
+      if (button.dataset.walkthrough) {
+        const walkthrough = walkthroughs.find(item => item.id === button.dataset.walkthrough);
+        const stepIndex = Number(button.dataset.step);
+        dispatch({
+          type: "WALKTHROUGH_STEP",
+          walkthroughId: walkthrough.id,
+          stepIndex,
+          innerAction: walkthrough.steps[stepIndex].action
+        });
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
