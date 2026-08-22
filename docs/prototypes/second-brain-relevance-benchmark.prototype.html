@@ -147,8 +147,10 @@
         before revealing pipeline identities.
       </p>
       <p class="notice">
-        Prototype only. The sample queries and documents are conversation prompts, not approved
-        benchmark data. Replace them with queries you have genuinely asked of your second brain.
+        Prototype only. Benchmark v1's headline queries are accepted, but the sample documents
+        and judgments are placeholders until the pooled judgment task is complete. The two extra
+        Beads phrasings and “Graph Engineering with Claude Code” belong to a separate robustness
+        slice.
       </p>
     </section>
 
@@ -161,7 +163,7 @@
     <section class="panel">
       <h2>Free play</h2>
       <div class="toolbar">
-        <button data-action="seed-balanced">Seed balanced query set</button>
+        <button data-action="seed-balanced">Seed benchmark v1</button>
         <button data-action="seed-easy">Seed only easy lookups</button>
         <button data-action="clear" class="secondary">Clear benchmark</button>
         <button data-action="grade-demo" class="secondary">Apply sample judgments</button>
@@ -215,34 +217,124 @@
 
   <script>
     const BenchmarkModel = (() => {
-      const balancedQueries = [
+      const headlineQueries = [
         {
           id: "q1",
-          text: "What did I decide about retry behavior for external APIs?",
+          text: "What is Steve Yegge's Beads tool? How does it work?",
           language: "English",
-          archetype: "Decision recall"
+          archetype: "Known item"
         },
         {
           id: "q2",
-          text: "Ποιες σημειώσεις συνδέουν την ανάκτηση πληροφοριών με τα εργαλεία για agents;",
-          language: "Greek",
+          text: "What is Graph engineering?",
+          language: "English",
           archetype: "Topic synthesis"
         },
         {
           id: "q3",
-          text: "\"position-aware blend\"",
+          text: "How can Graph engineering help me?",
           language: "English",
-          archetype: "Exact phrase"
+          archetype: "Applied/advisory"
         },
         {
           id: "q4",
-          text: "Ideas related to keeping local data private while using hosted models",
+          text: "Playwright Best Practices",
           language: "English",
-          archetype: "Exploratory"
+          archetype: "Known item"
         },
         {
           id: "q5",
-          text: "Where is the note containing the QMD database path?",
+          text: "Claude Code refactoring",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q6",
+          text: "Build a custom MCP server",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q7",
+          text: "Introducing Buzz",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q8",
+          text: "Loop Engineering in Claude Code",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q9",
+          text: "Run parallel sessions with worktrees in Claude Code",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q10",
+          text: "How to Build a Powerful LLM Knowledge Base",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q11",
+          text: "Microsoft Agent Framework",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q12",
+          text: "EF Core in Clean Architecture",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q13",
+          text: "Open Knowledge Format",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q14",
+          text: "How to Use OpenCode",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q15",
+          text: "Mastering Essential Software Architecture Patterns",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q16",
+          text: "How to Do Spec-Driven Development",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q17",
+          text: "Unveiling Umbraco CMS",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q18",
+          text: "Google's high performance Web AI Inference",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q19",
+          text: "Guide to Building WordPress Block Themes",
+          language: "English",
+          archetype: "Known item"
+        },
+        {
+          id: "q20",
+          text: "Master Dynamic Workflows in Claude Code",
           language: "English",
           archetype: "Known item"
         }
@@ -290,8 +382,8 @@
           case "SEED_BALANCED":
             return {
               ...initialState(),
-              queries: balancedQueries,
-              lastChange: "Added five query archetypes, including Greek and exploratory search."
+              queries: headlineQueries,
+              lastChange: "Loaded the accepted 20-query, English, lookup-heavy benchmark v1."
             };
           case "SEED_EASY":
             return {
@@ -370,9 +462,7 @@
           archetypes: archetypes.size,
           languages: languages.size,
           representative:
-            queries.length >= 5 &&
-            archetypes.size >= 4 &&
-            languages.size >= 2
+            queries.length === 20
         };
       }
 
@@ -395,11 +485,11 @@
       },
       {
         id: "balanced",
-        title: "Build representative coverage",
+        title: "Load the accepted headline set",
         description:
-          "Mix lookup, synthesis, decision recall, exploratory, and multilingual queries before comparing.",
+          "Use the frozen 20-query, English, lookup-heavy set and keep its coverage limits visible.",
         steps: [
-          { label: "Seed balanced query set", action: { type: "SEED_BALANCED" } },
+          { label: "Seed benchmark v1", action: { type: "SEED_BALANCED" } },
           { label: "Apply sample judgments", action: { type: "GRADE_DEMO" } },
           { label: "Reveal pipeline identities", action: { type: "TOGGLE_REVEAL" } }
         ]
@@ -410,7 +500,7 @@
         description:
           "Grade the same document pool while pipeline identities are hidden, then reveal the result.",
         steps: [
-          { label: "Reset with balanced queries", action: { type: "SEED_BALANCED" } },
+          { label: "Reset with benchmark v1", action: { type: "SEED_BALANCED" } },
           { label: "Record judgments first", action: { type: "GRADE_DEMO" } },
           { label: "Reveal only after grading", action: { type: "TOGGLE_REVEAL" } }
         ]
@@ -442,13 +532,13 @@
         <div class="stat"><strong>${formatScore(scoreB)}</strong><span>${state.revealed ? "QMDX candidate" : "pipeline B"} nDCG</span></div>
       `;
       const warnings = [];
-      if (state.queries.length < 5) warnings.push("fewer than five query intents");
-      if (coverage.archetypes < 4) warnings.push("narrow intent coverage");
-      if (coverage.languages < 2) warnings.push("no multilingual pressure");
+      if (state.queries.length !== 20) warnings.push("headline set is not the frozen 20-query version");
+      if (coverage.archetypes < 4) warnings.push("synthesis, decision recall, and exploratory behavior are under-sampled");
+      if (coverage.languages < 2) warnings.push("benchmark is intentionally English-only");
       if (gradedCount < 3) warnings.push("incomplete document judgments");
       document.querySelector("#state-verdict").innerHTML = `
         <strong>${coverage.representative ? "Shape looks representative." : "Shape is not representative yet."}</strong>
-        ${warnings.length ? `Watch: ${warnings.join(", ")}.` : "It now exercises varied intent and language."}
+        ${warnings.length ? `Watch: ${warnings.join(", ")}.` : "The frozen headline query set is loaded."}
         <div class="muted">${state.lastChange}</div>
       `;
     }
