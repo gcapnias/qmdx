@@ -12,6 +12,10 @@ _Avoid_: QMD replacement, QMD fork
 A versioned set of real queries, graded document judgments, and ranking measures used to compare search pipelines on the second-brain corpus.
 _Avoid_: Search impressions, example queries
 
+**Benchmark manifest**:
+The content-addressed freeze of the corpus snapshot, query provenance, slice and topic assignments, answerability anchors, canonicalization rules, judgment rubric, variant definitions, and randomization seed. Outcome-affecting changes after execution begins require a new benchmark version.
+_Avoid_: Mutable benchmark configuration
+
 **Benchmark workload**:
 The real search behavior a relevance benchmark represents and for which its conclusions are valid.
 _Avoid_: Universal search quality
@@ -20,25 +24,69 @@ _Avoid_: Universal search quality
 A real information need included in the benchmark's primary aggregate comparison. Its corpus answerability is established independently of candidate pipelines.
 _Avoid_: Test prompt
 
+**Intent statement**:
+A short pre-pool explanation shown with the original query during judgment that records the sought outcome, relevant context, and satisfaction criteria without naming an answerability anchor or expected document.
+_Avoid_: Rewritten query
+
 **Query provenance**:
 Evidence that benchmark wording comes from genuine search behavior rather than being reconstructed from a known document or desired result.
 _Avoid_: Query description
+
+**Provenance ledger**:
+A benchmark record completed before the manifest freeze that preserves each query's original wording, approximate date and context, and either contemporaneous evidence or an owner attestation that it reflects genuine search behavior.
+_Avoid_: Relevant-document rationale
 
 **Corpus answerability**:
 The independently established presence of at least one useful document for a query in the indexed corpus.
 _Avoid_: Candidate success
 
+**Answerability anchor**:
+A canonical document frozen before candidate pooling as evidence that a headline query has a useful answer in the corpus, withheld from tuning until all candidate runs are frozen, then injected into the blind judgment package whether or not a pipeline retrieved it.
+_Avoid_: Expected top result, Gold ranking
+
 **Robustness slice**:
 Paraphrases and overlapping formulations reported separately from headline queries so one information need cannot dominate aggregate relevance.
 _Avoid_: Duplicate queries
+
+**Topic family**:
+A single pre-run grouping assigned to each headline query from its wording and provenance alone, used for cluster-aware reporting without consulting retrieved documents, grades, or pipeline behavior.
+_Avoid_: Result cluster
 
 **Diagnostic slice**:
 Queries kept outside the headline aggregate to investigate behavior such as genuine no-answer retrieval.
 _Avoid_: Failed benchmark queries
 
+**Slice assignment**:
+A query's frozen benchmark-v1 classification as headline, robustness, or diagnostic; findings are reported in place and can change classification only in a new benchmark version.
+_Avoid_: Post-result filtering
+
+**Eligibility failure**:
+A disclosed violation of a pre-registered headline condition discovered after the manifest freeze, such as unsupported provenance or no pooled canonical document reaching grade 2 after an anchor mismatch. The query keeps its original slice assignment, is excluded from the primary aggregate, and remains visible diagnostically until a new benchmark version.
+_Avoid_: Post-result relabeling
+
 **Relevance judgment**:
-A blind, query-specific grade of how well a full document satisfies an information need: irrelevant, related, useful, or direct answer.
+A blind, query-specific full-document grade: 0 is irrelevant, unusable, or misleading; 1 is topically related without materially answering; 2 materially helps but is incomplete, indirect, or requires synthesis; 3 directly satisfies the central information need with sufficient specific substance. A document answering only one part of a multi-part query scores at most 2.
 _Avoid_: Pipeline score
+
+**Authoritative judge**:
+The second-brain owner whose understanding of the original information need determines the final relevance grade; reviewers may flag ambiguity, but the owner adjudicates it against the frozen rubric.
+_Avoid_: Majority voter
+
+**Rubric reviewer**:
+An independent reviewer who sees the same blind package without retrieval provenance and informs but does not replace the authoritative judge. Calibration requires a human reviewer; a privacy-approved local review process may instead be used for the concealed consistency sample.
+_Avoid_: Co-owner of relevance
+
+**Judgment calibration**:
+A two-stage blind exercise used to resolve category-boundary disagreements and freeze the 0-3 rubric before bulk grading; calibration pairs are regraded after the rubric is frozen.
+_Avoid_: Production grading
+
+**Judgment adjudication**:
+The authoritative judge's blind resolution of repeated, reviewer-flagged, or answerability-conflicting grades under the frozen rubric, preserving the original grade and a reason for any change.
+_Avoid_: Second vote
+
+**Blind judgment package**:
+An opaque, randomized presentation of a canonical document's searchable title, normalized collection-relative virtual path, and complete normalized Markdown body that hides machine-specific paths, retrieval provenance, alias count, anchor status, and repeat status until adjudication is frozen.
+_Avoid_: Anonymous document
 
 **Benchmark variant**:
 An executable search-pipeline configuration included for comparison without implying that it is the chosen QMDX architecture.
@@ -64,9 +112,21 @@ _Avoid_: Pure reranker order
 The canonical, deduplicated union of documents retrieved by benchmark variants for blind relevance grading.
 _Avoid_: Combined ranking
 
+**Canonical document**:
+The judgment identity shared by files with identical normalized Markdown content or, after review blind to pipeline identity, near-duplicate versions whose differences cannot change relevance for any frozen query. The most complete source-faithful version is the blind display representative; original paths, hashes, and merge rationale remain available for audit. Near-duplicate review is separated from the authoritative judge where feasible, and any owner pre-exposure is disclosed.
+_Avoid_: Topic cluster
+
+**Canonical ranking**:
+A pipeline ranking in which document aliases are collapsed to their best rank and lower results backfill the list to the required number of unique canonical documents.
+_Avoid_: Deduplicated pool only
+
 **Saturation audit**:
-A deeper retrieval check used to determine whether the primary judgment pool omitted useful documents.
+A pre-registered blind check for useful documents omitted by the top-10 judgment pool. A seeded round-robin samples up to 20 unseen canonical documents per query across co-primary ranking views from rank 11 through each view's available depth, capped at 50. A grade 2 or 3 triggers at most 50 additional documents for that query, allocated round-robin across triggered queries within the global grading budget; residual unjudged documents remain explicit.
 _Avoid_: Second benchmark
+
+**Grading budget**:
+The hard benchmark-v1 limit of 1,500 authoritative-judge presentations across calibration, primary grading, concealed repeats, adjudication, and saturation. It reserves 90 presentations for calibration, 400 for the initial saturation sample, and 150 for required adjudication before optional saturation escalation; projected primary work and its 20% repeats must fit the remainder. Excess projected work triggers deterministic trimming of the remote-factorial cell with the greatest marginal unique-pair burden, with frozen-seed tie-breaking. If required adjudication exhausts its reserve, the benchmark stops incomplete.
+_Avoid_: Unbounded judgment pool
 
 **Operational gate**:
 A latency, cost, or privacy constraint that a relevant search pipeline must also satisfy to remain a viable QMDX choice.
