@@ -1,0 +1,5 @@
+# Use QMD-selected chunks for remote reranking
+
+QMDX will submit up to 80 distinct QMD candidates in one admitted remote reranking request, using each candidate's exact non-empty QMD-selected chunk as its production relevance text. It will apply QMD's position-aware formula to provider-native request-local scores while retaining QMD identity and rank; this preserves QMD's public chunk-selection and ranking shape without copying private logic, sending complete personal documents, or claiming that remote scores are semantically equivalent to QMD's local reranker.
+
+Full-document payloads remain benchmark-only variants, pure remote-score order remains a diagnostic comparison, and identical selected chunks remain separate request entries because removing them can alter listwise scores. Provider routes that cannot accept the complete candidate set and return one valid score per candidate are ineligible rather than handled through silent truncation, independently scored batches, or fabricated scores.

@@ -136,6 +136,14 @@ _Avoid_: Relevance metric
 Hosted model execution used by QMDX for query expansion or reranking.
 _Avoid_: Cloud search
 
+**Dedicated remote reranker**:
+A hosted multilingual ranking service that evaluates a batch of documents against one reranking query and returns one request-local relevance score per document. QMDX integrates it through a provider-neutral adapter and does not treat general-purpose listwise generation as an equivalent core reranking contract.
+_Avoid_: General LLM ranking, Calibrated relevance probability
+
+**Reranking query**:
+The original query together with optional user-supplied search intent sent to the dedicated remote reranker. Generated queries are retrieval routes and are excluded from this input.
+_Avoid_: Expansion query bundle, Inferred user profile
+
 **Original query**:
 The exact search text supplied by the user, distinct from any generated query. It supplies the original lexical and vector retrieval routes.
 _Avoid_: Generated query, Rewritten query
@@ -195,6 +203,50 @@ _Avoid_: QMD replacement pipeline
 **QMD candidate pool**:
 The single reciprocal-rank-fused, locally retrieved set returned by QMD with local reranking disabled and passed by QMDX to remote reranking.
 _Avoid_: Final results, Separate query results
+
+**Reranking candidate**:
+One unique document from the QMD candidate pool submitted for remote relevance scoring while retaining its QMD retrieval identity and rank.
+_Avoid_: Retrieval route, Canonical document
+
+**Selected chunk**:
+The query- and intent-sensitive excerpt that QMD chooses from a candidate body and returns even when local reranking is disabled.
+_Avoid_: Complete document, Provider-generated summary
+
+**Production reranking payload**:
+The exact non-empty selected chunk sent as a reranking candidate's relevance text. The candidate's title, virtual path, context, complete body, and retrieval explanation remain local.
+_Avoid_: Full-document payload, Benchmark reranking payload
+
+**Benchmark reranking payload**:
+An experimental title, virtual-path, and complete-body representation used to compare reranker behavior, distinct from the production reranking payload.
+_Avoid_: Production reranking payload
+
+**Reranking request**:
+The single remote comparison set containing every reranking candidate as a distinct entry, including candidates whose selected chunks are identical.
+_Avoid_: Independently scored batches, Deduplicated chunk set
+
+**Provider route admission**:
+The determination that a remote route can accept the complete reranking request and return one score per candidate without QMDX splitting or truncating it.
+_Avoid_: Per-document size check, Runtime best effort
+
+**QMD position-aware reranking formula**:
+The final-score equation borrowed from QMD v2.8.3 and applied to a provider-native remote relevance score: retrieval contributes 0.75 at RRF ranks 1-3, 0.60 at ranks 4-10, and 0.40 thereafter. Sharing the equation does not make remote scores semantically equivalent to QMD's local reranker scores.
+_Avoid_: Exact QMD reranking equivalence, Pure reranker order
+
+**Remote relevance score**:
+A finite provider-produced value in the inclusive range `[0,1]` that compares every reranking candidate within one logical request. It is request-local, is not batch-normalized by QMDX, and is not comparable across unrelated searches.
+_Avoid_: Cross-query probability, Rank-derived score
+
+**Valid reranking response**:
+An all-or-nothing response that identifies every submitted candidate exactly once with a valid remote relevance score and contains no missing, duplicate, or unknown candidate identities.
+_Avoid_: Partial ranking, Default-filled response
+
+**Reranking request identity**:
+The identity that maps one submitted reranking candidate to one returned remote relevance score while preserving the candidate's QMD file identity.
+_Avoid_: Chunk-text identity, Abbreviated document ID
+
+**Reranking trace**:
+The retained provenance connecting a provider request, each QMD candidate and selected chunk, its remote relevance score, and the components of its final rank.
+_Avoid_: User-facing explanation schema
 
 **Index lifecycle**:
 QMD-owned collection updates, document indexing, embedding generation, and vector rebuilding. QMDX consumes the resulting configured index but does not replace its maintenance workflow.
