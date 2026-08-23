@@ -144,6 +144,22 @@ _Avoid_: Development machine, Benchmark machine
 QMD-managed BM25 and vector candidate retrieval against an existing local index, including the query embedding needed for vector search.
 _Avoid_: Local inference
 
+**QMDX search pipeline**:
+The ordered search flow in which remote query expansion produces typed queries, QMD performs local retrieval and reciprocal-rank fusion, remote reranking evaluates the fused candidate pool, and QMDX shapes the final results.
+_Avoid_: QMD replacement pipeline
+
+**QMD candidate pool**:
+The single reciprocal-rank-fused, locally retrieved set returned by QMD with local reranking disabled and passed by QMDX to remote reranking.
+_Avoid_: Final results, Separate query results
+
+**Index lifecycle**:
+QMD-owned collection updates, document indexing, embedding generation, and vector rebuilding. QMDX consumes the resulting configured index but does not replace its maintenance workflow.
+_Avoid_: QMDX indexing
+
+**Multilingual embedding profile**:
+The required local embedding configuration for QMDX-managed indexes that provides the project's multilingual vector-retrieval guarantee. An overridden profile remains usable but falls outside that guarantee and requires a complete vector rebuild.
+_Avoid_: Remote embedding, Optional multilingual mode
+
 **Local generation and reranking**:
 On-device query expansion or candidate reranking with generative or reranker models.
 _Avoid_: Local retrieval

@@ -1,0 +1,3 @@
+# Use Qwen3 embedding as the multilingual default
+
+QMDX-managed indexes will use QMD's documented `Qwen3-Embedding-0.6B-Q8_0` alternative as their required multilingual embedding profile because the project needs broad multilingual vector retrieval and Qwen states support for more than 100 languages. QMD remains responsible for embedding and index maintenance; adopting or changing this profile requires `qmd embed -f` because its vector space is incompatible with existing embeddings. Advanced overrides are allowed, but they forfeit QMDX's multilingual guarantee and require another complete vector rebuild.
