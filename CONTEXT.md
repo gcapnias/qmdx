@@ -135,3 +135,19 @@ _Avoid_: Relevance metric
 **Remote inference**:
 Hosted model execution used by QMDX for query expansion or reranking.
 _Avoid_: Cloud search
+
+**Target workstation**:
+The workstation on which QMD and QMDX must deliver acceptable interactive search behavior.
+_Avoid_: Development machine, Benchmark machine
+
+**Local retrieval**:
+QMD-managed BM25 and vector candidate retrieval against an existing local index, including the query embedding needed for vector search.
+_Avoid_: Local inference
+
+**Local generation and reranking**:
+On-device query expansion or candidate reranking with generative or reranker models.
+_Avoid_: Local retrieval
+
+**Workstation-eligible pipeline**:
+A search pipeline that meets the target workstation's hardware and interactive-latency constraints.
+_Avoid_: Hardware-independent pipeline
