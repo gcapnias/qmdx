@@ -136,6 +136,50 @@ _Avoid_: Relevance metric
 Hosted model execution used by QMDX for query expansion or reranking.
 _Avoid_: Cloud search
 
+**Original query**:
+The exact search text supplied by the user, distinct from any generated query. It supplies the original lexical and vector retrieval routes.
+_Avoid_: Generated query, Rewritten query
+
+**Search intent**:
+An optional user-supplied clarification of the desired search outcome. It guides chunk selection and reranking but is excluded from remote query expansion, and is distinct from the benchmark's intent statement.
+_Avoid_: Search history, Inferred user profile
+
+**Expansion input**:
+The original query sent to remote query expansion. It excludes search intent, corpus content, retrieved documents, paths, and search history.
+_Avoid_: Expansion context
+
+**Cross-language lexical variant**:
+A generated lexical query expressed in a different language from the original query to recover documents across a language boundary.
+_Avoid_: Mandatory bilingual expansion
+
+**Generated query**:
+A provider-produced typed query that adds a retrieval route alongside the routes derived from the original query.
+_Avoid_: Original query, Unbounded expansion
+
+**Retrieval route**:
+A typed query directed to lexical or vector retrieval that contributes one ranked result list to QMD's fusion.
+_Avoid_: Final ranking, Search pipeline
+
+**Expansion provenance**:
+Machine-readable metadata attached to a generated query: its language and its purpose as terminology, translation, semantic rewriting, or hypothetical-document retrieval.
+_Avoid_: Free-form model rationale
+
+**Degraded expansion**:
+A search state in which remote expansion did not produce usable generated queries and retrieval continues with the original lexical and vector routes while exposing a stable failure reason.
+_Avoid_: Successful expansion, Silent fallback
+
+**Original-sufficient expansion**:
+A successful remote-expansion outcome declaring that no generated query would usefully improve the original lexical and vector routes.
+_Avoid_: Degraded expansion, Empty invalid response
+
+**Partial expansion**:
+A successful expansion for which QMDX retains the valid generated queries and reports other generated entries discarded by local validation.
+_Avoid_: Degraded expansion
+
+**Adaptive query mix**:
+The selection of generated query types according to the original query's shape. Exact-identifier queries favor lexical variants, while descriptive or conceptual queries may add semantic and hypothetical-document queries.
+_Avoid_: Fixed query template
+
 **Target workstation**:
 The workstation on which QMD and QMDX must deliver acceptable interactive search behavior.
 _Avoid_: Development machine, Benchmark machine

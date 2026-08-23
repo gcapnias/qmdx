@@ -1,0 +1,3 @@
+# Preserve QMD structured-search fusion semantics
+
+QMDX will pass original and generated typed queries to QMD structured search and accept QMD's reciprocal-rank-fusion behavior rather than reimplementing fusion. In QMD 2.8.3, lexical routes run before vector routes and the first non-empty result list receives double weight, so original-query primacy is not guaranteed; QMDX accepts that consequence and measures it through its relevance benchmark. Owning fusion was rejected because it would duplicate QMD semantics, increase version coupling, and contradict the boundary that QMD owns local retrieval and fusion.
