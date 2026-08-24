@@ -168,12 +168,11 @@ Before search, setup and doctor must use public SDK health information to:
 1. Fail if the store cannot open.
 2. Fail if there are no active documents.
 3. Fail if the vector index is absent.
-4. Fail if every active document needs embedding for the effective model and
-   fingerprint.
-5. Fail if more than 10% of active documents need embedding.
-6. Warn with the count and percentage when at most 10% need embedding.
-7. Run a fixed local-only `searchVector(..., { limit: 1 })` readiness probe.
-8. Fail if the vector probe throws or cannot retrieve from an otherwise
+4. Fail if more than 10% of active documents need embedding for the effective
+   model and fingerprint, including the case where every document needs it.
+5. Warn with the count and percentage when at most 10% need embedding.
+6. Run a fixed local-only `searchVector(..., { limit: 1 })` readiness probe.
+7. Fail if the vector probe throws or cannot retrieve from an otherwise
    complete, non-empty index.
 
 `daysStale` is diagnostic only. Passing preflight establishes current usability
@@ -323,6 +322,14 @@ selected chunk, aggregate context/token limits, and all-results output. QMDX
 must not split the request, truncate chunks, accept silent provider truncation,
 or fabricate scores.
 
+For Cohere, QMDX must calculate a conservative token upper bound for every
+selected chunk using the provider-documented counting method before sending the
+request. When the API exposes `max_tokens_per_doc`, QMDX must set it high enough
+for the largest admitted chunk and no higher than the route's validated maximum.
+If QMDX cannot prove that every chunk fits without truncation, route admission
+fails with `payload_limit_exceeded`; it must not rely on a response to reveal
+silent truncation after the fact.
+
 A valid response identifies every submitted candidate exactly once with a
 finite provider-native score in `[0,1]`. Missing, duplicate, unknown, or invalid
 entries invalidate the entire response.
@@ -342,6 +349,20 @@ finalScore = retrievalWeight * (1 / rrfRank)
 | 1-3 | 0.75 |
 | 4-10 | 0.60 |
 | 11+ | 0.40 |
+
+This is the exact QMD 2.8.3 position-aware formula. QMDX deliberately does not
+normalize `1 / rrfRank` to another retrieval scale. The resulting rank-band
+behavior is inherited and must be evaluated by the acceptance benchmark rather
+than silently replaced during implementation.
+
+Worked examples:
+
+| QMD RRF rank | Remote score | Calculation | Final score |
+| ---: | ---: | --- | ---: |
+| 1 | 0.00 | `0.75 * 1 + 0.25 * 0` | 0.7500 |
+| 2 | 0.89 | `0.75 * 0.5 + 0.25 * 0.89` | 0.5975 |
+| 4 | 0.89 | `0.60 * 0.25 + 0.40 * 0.89` | 0.5060 |
+| 11 | 0.89 | `0.40 * (1 / 11) + 0.60 * 0.89` | 0.5704 |
 
 Equal final scores are ordered by lower original QMD RRF rank, then QMD internal
 file identity. No remote-score threshold removes candidates. The requested
@@ -430,6 +451,13 @@ payload or cost admission.
 - Reranking degradation keeps QMD fused order.
 - Both stages degrading yields the usable QMD baseline.
 
+A result with successful remote reranking uses the blended score as its public
+`score`. When reranking is degraded or disabled, the public `score` is QMD's
+position score, `1 / qmdRrfRank`. In an explanation for that state,
+`qmdPositionWeight` is `1`, `remoteRerankScore` is null, and `finalScore` equals
+the public position score. Both score modes occupy `[0,1]`; the pipeline state
+identifies which meaning applies.
+
 A degraded result is successful only when local retrieval produced usable
 results. Warnings, stage states, reasons, retries, timing, and cost metadata are
 mandatory.
@@ -451,7 +479,7 @@ QMDX v1 supports these QMD 2.8.3 query options:
 | Option | QMDX behavior |
 | --- | --- |
 | `-n`, `--limit` | Final result count from 1 through 80 |
-| `--min-score` | Filter after QMDX final scoring |
+| `--min-score` | Filter the active pipeline's public `[0,1]` score: blended score after successful reranking, or `1 / qmdRrfRank` when reranking is degraded or disabled |
 | `--full` | Include complete result body |
 | `-c`, `--collection` | Preserve QMD collection filtering |
 | `--intent` | Guide QMD chunk selection and remote reranking; never expansion |
@@ -554,7 +582,7 @@ Each result contains these stable fields:
 {
   "rank": 1,
   "docid": "#a19c42",
-  "score": 0.91,
+  "score": 0.5975,
   "file": "qmd://notes/projects/qmdx.md",
   "title": "QMDX planning notes",
   "context": "Project decisions",
@@ -572,7 +600,20 @@ Each result contains these stable fields:
     "qmdRrfRank": 2,
     "qmdPositionWeight": 0.75,
     "remoteRerankScore": 0.89,
-    "finalScore": 0.91
+    "finalScore": 0.5975
+  }
+}
+```
+
+When reranking is degraded or disabled, the same explanation shape is:
+
+```json
+{
+  "explanation": {
+    "qmdRrfRank": 2,
+    "qmdPositionWeight": 1,
+    "remoteRerankScore": null,
+    "finalScore": 0.5
   }
 }
 ```
@@ -675,6 +716,11 @@ expansion or reranking.
 - Reject if more than 20% of eligible headline queries lose over 0.10
 - Reject if a query whose baseline top 3 contains a grade-2/3 document has no
   grade-2/3 QMDX document in its top 10
+
+Benchmark v1's 16 families are already frozen by its governance decision: one
+two-query graph-engineering family, one four-query Claude Code family, and 14
+singleton families. The benchmark manifest must reproduce those assignments
+exactly; it does not determine a new family count at execution time.
 
 Report Recall@10, MRR to the first grade-2/3 result, Success@3, robustness and
 diagnostic slices, and a 95% topic-family bootstrap interval diagnostically.
