@@ -5,6 +5,10 @@ import { exitCodeForCategory } from "../core/exit-codes.js";
 
 const USAGE = `Usage: qmdx query <query> [options]
 
+The query is either a plain query or a typed query document whose lines are
+"intent:", "lex:", "vec:", or "hyde:" routes (QMD 2.8.3 grammar). A document
+without a plain query requires --no-expand.
+
 Options:
   -n, --limit <n>        Final result count (1-80, default 10)
   --min-score <n>        Minimum public score in [0,1]
@@ -12,11 +16,12 @@ Options:
   -c, --collection <name>  Restrict to a collection (repeatable)
   --intent <text>        Search intent guiding chunk selection and reranking
   --format <kind>        "human" (default) or "json"
-  --full-path            Show on-disk paths instead of qmd:// URIs
-  --line-numbers         Show line numbers
+  --full-path            Show QMD display paths instead of qmd:// URIs
+  --line-numbers         Number snippet and body lines
   --explain              Add per-result retrieval and reranking provenance
+  --profile <name>       Select a configured route profile
   --require-remote       Fail unless both remote stages succeed
-  --no-expand            Diagnostic mode using only original routes
+  --no-expand            Diagnostic mode using only explicit/original routes
   --no-rerank            Diagnostic mode returning QMD fused order
 `;
 
