@@ -143,7 +143,8 @@ async function retrievalStage(
     }
     let store: QMDStore | null = null;
     try {
-      store = await openProjectStore(location);
+      const opened = await openProjectStore(location);
+      store = opened.store;
       const routes = retrievalRoutes(request);
       const pool = await fetchCandidatePool(store, {
         originalQuery: request.originalQuery,

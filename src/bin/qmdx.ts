@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 import { runQueryCommand } from "../cli/query-command.js";
+import {
+  runReadinessCommand,
+  type ReadinessCommandName,
+} from "../cli/readiness-command.js";
 import { invalidInvocationError, QmdxError } from "../core/errors.js";
 import { exitCodeForCategory } from "../core/exit-codes.js";
 
-const USAGE = `Usage: qmdx query <query> [options]
+const USAGE = `Usage: qmdx <command> [options]
 
-Options:
+Commands:
+  query <query>   Search a QMD index with remote expansion and reranking
+  setup           Validate local index readiness before first use
+  doctor          Repeat local index readiness diagnostics
+
+query options:
   -n, --limit <n>        Final result count (1-80, default 10)
   --min-score <n>        Minimum public score in [0,1]
   --full                 Include complete result body
@@ -18,15 +27,31 @@ Options:
   --require-remote       Fail unless both remote stages succeed
   --no-expand            Diagnostic mode using only original routes
   --no-rerank            Diagnostic mode returning QMD fused order
+
+setup/doctor options:
+  --format <kind>        "human" (default) or "json"
 `;
+
+function commandOf(argv: readonly string[]):
+  | { kind: "query" }
+  | { kind: "readiness"; command: ReadinessCommandName }
+  | { kind: "unknown"; name: string }
+  | { kind: "none" } {
+  if (argv.length === 0) return { kind: "none" };
+  const name = argv[0]!;
+  if (name === "query") return { kind: "query" };
+  if (name === "setup" || name === "doctor") return { kind: "readiness", command: name };
+  return { kind: "unknown", name };
+}
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] !== "query") {
+  const command = commandOf(argv);
+  if (command.kind === "none" || command.kind === "unknown") {
     const error =
-      argv.length === 0
+      command.kind === "none"
         ? invalidInvocationError("a command is required")
-        : invalidInvocationError(`unknown command "${argv[0]}"`);
+        : invalidInvocationError(`unknown command "${command.name}"`);
     process.stderr.write(`qmdx: ${error.message}\n\n${USAGE}`);
     return exitCodeForCategory(error.category);
   }
@@ -34,7 +59,10 @@ async function main(): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  return runQueryCommand(argv.slice(1));
+  if (command.kind === "query") {
+    return runQueryCommand(argv.slice(1));
+  }
+  return runReadinessCommand(command.command, argv.slice(1));
 }
 
 main()

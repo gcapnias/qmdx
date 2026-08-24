@@ -13,9 +13,17 @@ interface RawProjectConfig {
   models?: { embed?: string; rerank?: string; generate?: string };
 }
 
+export interface OpenedProjectStore {
+  store: QMDStore;
+  /** The effective embedding model explicitly configured for this open. */
+  embedModel: string;
+  /** True when the effective profile is the approved multilingual default. */
+  multilingualDefault: boolean;
+}
+
 export async function openProjectStore(
   location: ProjectIndexLocation,
-): Promise<QMDStore> {
+): Promise<OpenedProjectStore> {
   let raw: RawProjectConfig;
   try {
     raw = parse(readFileSync(location.configPath, "utf8")) as RawProjectConfig;
@@ -27,16 +35,20 @@ export async function openProjectStore(
     );
   }
 
+  const configuredEmbed = raw.models?.embed;
+  const embedModel = configuredEmbed ?? REQUIRED_EMBED_MODEL;
+
   const config = {
     collections: (raw.collections ?? {}) as CollectionConfig["collections"],
     models: {
       ...raw.models,
-      embed: raw.models?.embed ?? REQUIRED_EMBED_MODEL,
+      embed: embedModel,
     },
   } satisfies Partial<CollectionConfig> as CollectionConfig;
 
+  let store: QMDStore;
   try {
-    return await createStore({ dbPath: location.dbPath, config });
+    store = await createStore({ dbPath: location.dbPath, config });
   } catch (cause) {
     throw localIndexUnavailableError(
       `Cannot open QMD index at ${location.dbPath}: ${
@@ -44,4 +56,11 @@ export async function openProjectStore(
       }`,
     );
   }
+
+  return {
+    store,
+    embedModel,
+    multilingualDefault:
+      configuredEmbed === undefined || configuredEmbed === REQUIRED_EMBED_MODEL,
+  };
 }
