@@ -248,10 +248,10 @@ describe("setup shares the doctor readiness gate", () => {
     expect(JSON.parse(run.stderr).error.code).toBe("local_index_incomplete");
   });
 
-  it("rejects unsupported setup/doctor options", () => {
+  it("accepts --profile, failing on unconfigured names as invalid_profile", () => {
     const run = runCli(["setup", "--profile", "default", "--format", "json"], healthy.root);
     expect(run.status).toBe(2);
-    expect(JSON.parse(run.stderr).error.code).toBe("unsupported_option");
+    expect(JSON.parse(run.stderr).error.code).toBe("invalid_profile");
 
     const doctorRun = runCli(["doctor", "--all", "--format", "json"], healthy.root);
     expect(doctorRun.status).toBe(2);

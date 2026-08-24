@@ -34,7 +34,12 @@ query options:
   --no-rerank            Diagnostic mode returning QMD fused order
 
 setup/doctor options:
+  --profile <name>       Select a configured route profile
   --format <kind>        "human" (default) or "json"
+
+Route profiles are read from the version-1 configuration file in the OS user
+configuration directory; credentials are only ever named via environment
+variables ("credentialEnv"), never stored or passed literally.
 `;
 
 function commandOf(argv: readonly string[]):

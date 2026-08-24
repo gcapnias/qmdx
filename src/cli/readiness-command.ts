@@ -1,7 +1,12 @@
 import type { IndexReadinessReport } from "../qmd/readiness.js";
 import { validateIndexReadiness } from "../qmd/readiness.js";
 import { systemClock } from "../core/clock.js";
-import { localIndexUnavailableError, unsupportedOptionError } from "../core/errors.js";
+import { invalidInvocationError, localIndexUnavailableError, unsupportedOptionError } from "../core/errors.js";
+import {
+  resolveSelectedProfile,
+  routeDiagnostic,
+  type EffectiveProfile,
+} from "../config/resolve.js";
 import { findProjectIndex } from "../qmd/paths.js";
 import { openProjectStore } from "../qmd/store.js";
 import type { CommandIo } from "./failure.js";
@@ -11,10 +16,11 @@ export type ReadinessCommandName = "setup" | "doctor";
 
 interface ReadinessInvocation {
   format: "human" | "json";
+  profile: string | null;
 }
 
 function parseReadinessArgs(argv: readonly string[]): ReadinessInvocation {
-  const invocation: ReadinessInvocation = { format: "human" };
+  const invocation: ReadinessInvocation = { format: "human", profile: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--format") {
@@ -33,8 +39,15 @@ function parseReadinessArgs(argv: readonly string[]): ReadinessInvocation {
       invocation.format = value;
       continue;
     }
-    if (arg === "--profile") {
-      throw unsupportedOptionError(arg);
+    if (arg === "--profile" || arg.startsWith("--profile=")) {
+      const value = arg.startsWith("--profile=")
+        ? arg.slice("--profile=".length)
+        : argv[++i];
+      if (value === undefined || value === "" || value.startsWith("-")) {
+        throw invalidInvocationError(`Option ${arg} requires a value.`);
+      }
+      invocation.profile = value;
+      continue;
     }
     throw unsupportedOptionError(arg);
   }
@@ -68,6 +81,19 @@ export async function runReadinessCommand(
   const startedAt = systemClock.nowMs();
   try {
     const invocation = parseReadinessArgs(argv);
+    const effectiveProfile: EffectiveProfile | null =
+      resolveSelectedProfile(invocation.profile);
+    if (
+      invocation.format === "human" &&
+      effectiveProfile !== null
+    ) {
+      for (const stage of ["expansion", "reranking"] as const) {
+        const route = routeDiagnostic(effectiveProfile[stage]);
+        streams.stdout.write(
+          `${command} ${stage}: provider=${route.provider} endpoint=${route.endpoint} model=${route.model} credentialEnv=${route.credentialEnv}\n`,
+        );
+      }
+    }
     const report = await validateProjectIndex();
 
     if (invocation.format === "json") {

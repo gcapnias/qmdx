@@ -153,7 +153,7 @@ async function lookupDocids(dbPath: string): Promise<Map<string, string>> {
 
 export interface RunCliOptions {
   /** Additional environment variables for the child process. */
-  env?: Record<string, string>;
+  env?: NodeJS.ProcessEnv;
   /**
    * Launch the child with the deterministic fake-embed preload active at the
    * given vector width. Use a different width than the index was built with

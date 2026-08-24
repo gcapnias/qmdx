@@ -19,6 +19,7 @@ export function wantsJsonOutput(argv: readonly string[]): boolean {
   );
 }
 
+/** Shared QmdxError -> error-envelope/human-line emitter. Returns exit code. */
 export function emitFailure(
   error: unknown,
   argv: readonly string[],

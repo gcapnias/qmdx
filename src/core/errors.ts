@@ -47,6 +47,22 @@ export function invalidProfileError(name: string): QmdxError {
   );
 }
 
+export function invalidProfileConfigError(detail: string): QmdxError {
+  return new QmdxError("configuration", "invalid_profile", detail);
+}
+
+export function missingCredentialsError(
+  credentialEnvVar: string,
+  stage: "expansion" | "reranking",
+): QmdxError {
+  return new QmdxError(
+    "configuration",
+    "missing_credentials",
+    `Environment variable "${credentialEnvVar}" (the credential reference for the ${stage} route) is not set.`,
+    null,
+  );
+}
+
 export function localIndexUnavailableError(detail: string): QmdxError {
   return new QmdxError("local_retrieval", "local_index_unavailable", detail);
 }

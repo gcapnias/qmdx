@@ -1,8 +1,7 @@
-import type { EnvelopeWarning } from "../core/envelope.js";
-import { QmdxError } from "../core/errors.js";
+import type { EnvelopeWarning, ResultEnvelope } from "../core/envelope.js";
 import { systemClock } from "../core/clock.js";
-import type { ResultEnvelope } from "../core/envelope.js";
 import { parseQueryArgs } from "./args.js";
+import { resolveSelectedProfile } from "../config/resolve.js";
 import type { CommandIo } from "./failure.js";
 import { emitFailure } from "./failure.js";
 import {
@@ -10,6 +9,7 @@ import {
   renderResultEnvelope,
 } from "./render.js";
 import { runQuery } from "../pipeline/search.js";
+import { RequiredRemoteFailure } from "./required-remote-failure.js";
 
 export type { CommandIo };
 
@@ -21,13 +21,7 @@ export async function runQueryCommand(
   const startedAt = systemClock.nowMs();
   try {
     const invocation = parseQueryArgs(argv);
-    if (invocation.profile !== null) {
-      throw new QmdxError(
-        "configuration",
-        "invalid_profile",
-        `Route profile "${invocation.profile}" is not configured.`,
-      );
-    }
+    resolveSelectedProfile(invocation.profile);
 
     const outcome = await runQuery(invocation);
     const envelope = outcome.envelope;
@@ -88,14 +82,4 @@ function firstFailingRemoteStage(
     return "reranking";
   }
   return null;
-}
-
-class RequiredRemoteFailure extends QmdxError {
-  constructor(
-    message: string,
-    stage: "expansion" | "reranking",
-    public readonly stageWarnings: EnvelopeWarning[],
-  ) {
-    super("required_remote", "required_remote_failed", message, stage);
-  }
 }
