@@ -168,6 +168,42 @@ _Avoid_: Benchmark score
 Hosted model execution used by QMDX for query expansion or reranking.
 _Avoid_: Cloud search
 
+**Remote route**:
+The independently configured provider, endpoint, model, and credential reference used by one remote-inference stage. Expansion and reranking have separate routes, though both routes may use the same provider and credential.
+_Avoid_: Shared provider requirement, Search pipeline
+
+**Route profile**:
+A named local configuration that selects the expansion and reranking remote routes and their non-secret operational settings. Command-line, environment, profile, and built-in values resolve in that precedence order.
+_Avoid_: Credential store, Provider account
+
+**Credential reference**:
+A non-secret identifier in a route profile that QMDX resolves to a credential at invocation time. The initial reference mechanism names an environment variable; literal credentials are excluded from profiles, ordinary command-line values, logs, traces, and result envelopes.
+_Avoid_: Stored credential, API-key flag
+
+**Route preflight**:
+The combination of static profile validation, an explicit authenticated live capability check with a short-lived non-secret result, and request-specific local admission checks. It establishes route eligibility without adding a separate remote probe to every search.
+_Avoid_: Billable per-search probe, Best-effort request
+
+**Privacy declaration**:
+A versioned description of a route profile's endpoint and region, stage-specific transmitted data, retention and training terms, and reviewed policy sources. Interactive approval is required before first use; material route or policy changes invalidate approval, and non-interactive use fails closed without a current approval.
+_Avoid_: Global consent, Documentation-only disclosure
+
+**Query cost budget**:
+The hard upper bound on estimated billable remote inference for one search, enforced before every attempt using a conservative reviewed rate card. Period budgets derived from a local usage ledger are advisory because they cannot observe all provider activity.
+_Avoid_: Provider account budget, Retrospective cost report
+
+**Stage budget**:
+The cumulative time available to one remote-inference stage, including its attempts and backoff, within the search's hard end-to-end deadline.
+_Avoid_: Per-attempt timeout, Latency target
+
+**Required-remote search**:
+A search mode in which both expansion and reranking must produce a valid result, from an eligible cache entry or a successful provider request, rather than returning a degraded search.
+_Avoid_: Default search, Provider failover
+
+**Sensitive diagnostic capture**:
+An explicit, warned diagnostic artifact that may contain remote payload content at a user-selected protected destination. Default logs, traces, explanations, and result envelopes remain metadata-only.
+_Avoid_: Default logging, Search explanation
+
 **Dedicated remote reranker**:
 A hosted multilingual ranking service that evaluates a batch of documents against one reranking query and returns one request-local relevance score per document. QMDX integrates it through a provider-neutral adapter and does not treat general-purpose listwise generation as an equivalent core reranking contract.
 _Avoid_: General LLM ranking, Calibrated relevance probability
