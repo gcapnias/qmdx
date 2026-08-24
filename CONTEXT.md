@@ -9,12 +9,16 @@ A companion or extension that adds remote query expansion and reranking to searc
 _Avoid_: QMD replacement, QMD fork
 
 **Compatible core interface**:
-The QMDX search interface that preserves QMD query syntax, option meanings, and result identity wherever remote inference does not require a deliberate difference.
-_Avoid_: Drop-in replacement, Independent CLI
+The documented QMD 2.8.3 query subset that QMDX preserves while adding remote inference. Options outside that perimeter are rejected rather than accepted with altered or ambiguous behavior.
+_Avoid_: Drop-in replacement, Full QMD CLI compatibility
 
 **Agent result envelope**:
-A versioned machine-readable QMDX search response containing the query, pipeline-stage outcomes, QMD-compatible results, structured warnings, and timing.
+A versioned machine-readable response for a completed QMDX search containing the query, pipeline-stage outcomes, QMD-compatible results, structured warnings, and timing.
 _Avoid_: Bare result array, Diagnostic stderr
+
+**Agent error envelope**:
+A versioned machine-readable response for a failed QMDX invocation containing one stable error category and code, its stage when applicable, retryability, warnings, and elapsed timing.
+_Avoid_: Unstructured stderr, Successful empty result
 
 **Relevance benchmark**:
 A versioned set of real queries, graded document judgments, and ranking measures used to compare search pipelines on the second-brain corpus.

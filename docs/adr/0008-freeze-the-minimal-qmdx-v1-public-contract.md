@@ -1,0 +1,3 @@
+# Freeze the minimal QMDX v1 public contract
+
+QMDX v1 will ship one OpenAI-compatible expansion adapter defaulting to `gpt-4o-mini` and one Cohere reranking adapter defaulting to `rerank-v4.0-pro`, use an OS-standard JSON profile selected through `setup`, `doctor`, and `query` commands, expose normative version-1 result and error envelopes with fixed exit codes, and support an explicit subset of QMD 2.8.3 query options. Shipping every researched provider, leaving configuration and machine output to implementation, or claiming full QMD CLI compatibility were rejected because they either expand the shortened v1 beyond its purpose or leave public behavior ambiguous at implementation handoff.
