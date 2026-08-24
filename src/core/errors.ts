@@ -51,6 +51,14 @@ export function localIndexUnavailableError(detail: string): QmdxError {
   return new QmdxError("local_retrieval", "local_index_unavailable", detail);
 }
 
+export function localIndexIncompleteError(detail: string): QmdxError {
+  return new QmdxError("local_retrieval", "local_index_incomplete", detail);
+}
+
+export function vectorProbeFailedError(detail: string): QmdxError {
+  return new QmdxError("local_retrieval", "vector_probe_failed", detail);
+}
+
 export function requiredRemoteFailedError(
   stage: Exclude<ErrorStage, null>,
   detail: string,
