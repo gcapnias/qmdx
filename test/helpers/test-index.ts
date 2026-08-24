@@ -85,11 +85,12 @@ async function lookupDocids(dbPath: string): Promise<Map<string, string>> {
 export function runCli(
   args: readonly string[],
   cwd: string,
+  env: NodeJS.ProcessEnv = {},
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [BIN_PATH, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env },
+    env: { ...process.env, ...env },
     timeout: 60000,
   });
   return {

@@ -1,19 +1,15 @@
-import {
-  buildErrorEnvelope,
-  type EnvelopeWarning,
-  type ErrorEnvelope,
-} from "../core/envelope.js";
-import { QmdxError } from "../core/errors.js";
-import { exitCodeForCategory } from "../core/exit-codes.js";
-import { systemClock } from "../core/clock.js";
 import type { ResultEnvelope } from "../core/envelope.js";
+import { systemClock } from "../core/clock.js";
 import { parseQueryArgs } from "./args.js";
+import { resolveSelectedProfile } from "../config/resolve.js";
 import {
   renderErrorEnvelope,
   renderHumanResults,
   renderResultEnvelope,
 } from "./render.js";
 import { runQuery } from "../pipeline/search.js";
+import { RequiredRemoteFailure } from "./required-remote-failure.js";
+import { emitFailure } from "./failure.js";
 
 export interface CommandIo {
   stdout: NodeJS.WritableStream;
@@ -28,13 +24,7 @@ export async function runQueryCommand(
   const startedAt = systemClock.nowMs();
   try {
     const invocation = parseQueryArgs(argv);
-    if (invocation.profile !== null) {
-      throw new QmdxError(
-        "configuration",
-        "invalid_profile",
-        `Route profile "${invocation.profile}" is not configured.`,
-      );
-    }
+    resolveSelectedProfile(invocation.profile);
 
     const envelope = await runQuery(invocation);
 
@@ -77,60 +67,4 @@ function firstFailingRemoteStage(
     return "reranking";
   }
   return null;
-}
-
-class RequiredRemoteFailure extends QmdxError {
-  constructor(
-    message: string,
-    stage: "expansion" | "reranking",
-    public readonly stageWarnings: EnvelopeWarning[],
-  ) {
-    super("required_remote", "required_remote_failed", message, stage);
-  }
-}
-
-function wantsJsonOutput(argv: readonly string[]): boolean {
-  return (
-    argv.includes("--format") && argv[argv.indexOf("--format") + 1] === "json"
-  );
-}
-
-function emitFailure(
-  error: unknown,
-  argv: readonly string[],
-  startedAt: number,
-  streams: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream },
-): number {
-  let qmdxError =
-    error instanceof QmdxError
-      ? error
-      : new QmdxError(
-          "internal",
-          "internal_error",
-          error instanceof Error ? error.message : String(error),
-        );
-  let warnings: EnvelopeWarning[] | undefined;
-  if (error instanceof RequiredRemoteFailure) {
-    qmdxError = error;
-    warnings = error.stageWarnings;
-  }
-  const totalMs = systemClock.nowMs() - startedAt;
-
-  if (wantsJsonOutput(argv)) {
-    const envelope: ErrorEnvelope = buildErrorEnvelope({
-      error: {
-        category: qmdxError.category,
-        code: qmdxError.code,
-        message: qmdxError.message,
-        stage: qmdxError.stage,
-        retryable: qmdxError.retryable,
-      },
-      warnings,
-      totalMs,
-    });
-    renderErrorEnvelope(streams, envelope);
-  } else {
-    streams.stderr.write(`qmdx: ${qmdxError.message}\n`);
-  }
-  return exitCodeForCategory(qmdxError.category);
 }
