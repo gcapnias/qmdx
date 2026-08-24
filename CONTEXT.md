@@ -328,6 +328,26 @@ _Avoid_: Reranking trace, Provider rationale, Always-on diagnostics
 QMD-owned collection updates, document indexing, embedding generation, and vector rebuilding. QMDX consumes the resulting configured index but does not replace its maintenance workflow.
 _Avoid_: QMDX indexing
 
+**Index compatibility preflight**:
+The assessment that a QMD-managed index is usable by QMDX's pinned SDK and effective embedding profile before search begins. It establishes current usability without claiming forward compatibility with other QMD versions.
+_Avoid_: Index migration, Schema inspection
+
+**Embedding coverage**:
+The share of active indexed documents with a complete vector set matching the effective embedding profile and its current embedding fingerprint.
+_Avoid_: Vector-table presence, Embedding progress
+
+**Usable local index**:
+A non-empty QMD-managed index whose lexical and vector retrieval paths are executable and whose embedding coverage satisfies the QMDX compatibility gate.
+_Avoid_: Openable database, Lexical-only index
+
+**Vector readiness probe**:
+A local setup or doctor check that exercises vector retrieval to establish that the configured model, vector dimensions, and native vector runtime work together.
+_Avoid_: Vector-table existence check, Remote capability probe
+
+**Local retrieval failure**:
+A failure that prevents QMD from producing the required lexical-and-vector candidate pool. Unlike a remote-stage failure, it cannot produce a degraded search.
+_Avoid_: Degraded search, Remote-stage failure
+
 **Multilingual embedding profile**:
 The required local embedding configuration for QMDX-managed indexes that provides the project's multilingual vector-retrieval guarantee. An overridden profile remains usable but falls outside that guarantee and requires a complete vector rebuild.
 _Avoid_: Remote embedding, Optional multilingual mode
