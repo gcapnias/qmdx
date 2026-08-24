@@ -1,0 +1,3 @@
+# Preserve QMD query compatibility behind a QMDX contract
+
+QMDX will expose its core search through `qmdx query`, preserving `qmd query` syntax, option meanings, query documents, and result identity unless remote expansion or reranking requires a deliberate difference. Agent output will use a versioned envelope rather than QMD's bare result array so pipeline outcomes, structured warnings, and timing remain stable and machine-readable; degraded searches may still complete with usable QMD-derived results, while detailed per-result explanations remain opt-in. Extending `qmd` directly and preserving a bare array were rejected because they would couple QMDX to QMD's executable and leave remote-stage behavior implicit.

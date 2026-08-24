@@ -8,6 +8,14 @@ QMDX is a search companion for QMD that adds remote inference to QMD-backed sear
 A companion or extension that adds remote query expansion and reranking to searches over QMD-managed indexes.
 _Avoid_: QMD replacement, QMD fork
 
+**Compatible core interface**:
+The QMDX search interface that preserves QMD query syntax, option meanings, and result identity wherever remote inference does not require a deliberate difference.
+_Avoid_: Drop-in replacement, Independent CLI
+
+**Agent result envelope**:
+A versioned machine-readable QMDX search response containing the query, pipeline-stage outcomes, QMD-compatible results, structured warnings, and timing.
+_Avoid_: Bare result array, Diagnostic stderr
+
 **Relevance benchmark**:
 A versioned set of real queries, graded document judgments, and ranking measures used to compare search pipelines on the second-brain corpus.
 _Avoid_: Search impressions, example queries
@@ -129,8 +137,32 @@ The hard benchmark-v1 limit of 1,500 authoritative-judge presentations across ca
 _Avoid_: Unbounded judgment pool
 
 **Operational gate**:
-A latency, cost, or privacy constraint that a relevant search pipeline must also satisfy to remain a viable QMDX choice.
+A latency, reliability, cost, or privacy constraint that a relevant search pipeline must also satisfy to remain a viable QMDX choice.
 _Avoid_: Relevance metric
+
+**Relevance gate**:
+The primary acceptance test that requires an acceptance candidate to improve ranking quality over the usable QMD baseline without severe relevance regression.
+_Avoid_: Operational gate, Diagnostic metric
+
+**Severe relevance regression**:
+A query-level loss that makes an acceptance candidate unsafe to approve despite an aggregate relevance gain, either by affecting too much of the benchmark workload or by losing an otherwise prominent useful result.
+_Avoid_: Any negative query delta, Average relevance loss
+
+**Usable QMD baseline**:
+The workstation-eligible QMD comparison path that uses the original query, local lexical and vector retrieval, and QMD fusion without local query expansion or local reranking.
+_Avoid_: Untouched stock QMD, QMDX without remote providers
+
+**Acceptance candidate**:
+One fully frozen production QMDX pipeline evaluated against the usable QMD baseline without tuning after relevance judgments are revealed.
+_Avoid_: Benchmark variant, Mutable candidate
+
+**Guardrailed relevance win**:
+An acceptance result in which QMDX demonstrates a practically meaningful relevance improvement while independently satisfying every operational gate.
+_Avoid_: Weighted score, Relevance-at-any-cost
+
+**Acceptance outcome**:
+The final classification of an acceptance candidate as accepted, rejected, or inconclusive under the frozen comparison rules. An inconclusive candidate is not an improvement.
+_Avoid_: Benchmark score
 
 **Remote inference**:
 Hosted model execution used by QMDX for query expansion or reranking.
@@ -175,6 +207,10 @@ _Avoid_: Free-form model rationale
 **Degraded expansion**:
 A search state in which remote expansion did not produce usable generated queries and retrieval continues with the original lexical and vector routes while exposing a stable failure reason.
 _Avoid_: Successful expansion, Silent fallback
+
+**Degraded search**:
+A completed search in which a remote stage failed but QMDX returned usable QMD-derived results and exposed the failure as a structured warning.
+_Avoid_: Successful remote pipeline, Silent fallback, Failed search
 
 **Original-sufficient expansion**:
 A successful remote-expansion outcome declaring that no generated query would usefully improve the original lexical and vector routes.
@@ -247,6 +283,10 @@ _Avoid_: Chunk-text identity, Abbreviated document ID
 **Reranking trace**:
 The retained provenance connecting a provider request, each QMD candidate and selected chunk, its remote relevance score, and the components of its final rank.
 _Avoid_: User-facing explanation schema
+
+**Search explanation**:
+The user-facing account of a QMDX search outcome: a pipeline summary by default and, when explicitly requested, per-result retrieval and reranking details.
+_Avoid_: Reranking trace, Provider rationale, Always-on diagnostics
 
 **Index lifecycle**:
 QMD-owned collection updates, document indexing, embedding generation, and vector rebuilding. QMDX consumes the resulting configured index but does not replace its maintenance workflow.
