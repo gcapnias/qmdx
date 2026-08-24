@@ -136,6 +136,25 @@ function resolveRoute(
 }
 
 /**
+ * Resolves the selected profile name and returns its raw stored profile
+ * without resolving credentials. Selection follows the same rules as
+ * {@link resolveSelectedProfile}: `requestedProfile === null` falls back to
+ * `defaultProfile`; null is returned when neither is set. Throws
+ * configuration/invalid_profile when the selected profile does not exist.
+ */
+export function loadSelectedRawProfile(
+  requestedProfile: string | null | undefined,
+  options: ConfigStoreOptions = {},
+): RouteProfile | null {
+  const config = loadUserConfig(options);
+  const name = requestedProfile ?? config?.defaultProfile ?? null;
+  if (name === null) return null;
+  const profiles = config?.profiles ?? {};
+  if (!(name in profiles)) throw invalidProfileError(name);
+  return profiles[name]!;
+}
+
+/**
  * Resolves the credential for an effective route from the single environment
  * variable its `credentialEnv` names. Throws configuration/missing_credentials
  * when it is unset. The value must never be logged, stored, or echoed.

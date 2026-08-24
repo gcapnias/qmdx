@@ -37,8 +37,8 @@ function expectSingleJson<T>(stdout: string): T {
 }
 
 describe("query --format json", () => {
-  it("returns one result envelope on stdout with empty stderr and exit 0", () => {
-    const run = runCli(
+  it("returns one result envelope on stdout with empty stderr and exit 0", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--format", "json", "--explain"],
       index.root,
     );
@@ -54,8 +54,8 @@ describe("query --format json", () => {
     });
   });
 
-  it("performs a real local search with result identity matching the controlled index", () => {
-    const run = runCli(
+  it("performs a real local search with result identity matching the controlled index", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--format", "json", "--explain"],
       index.root,
     );
@@ -83,8 +83,8 @@ describe("query --format json", () => {
     expect(Object.keys(top).sort()).toContain("context");
   });
 
-  it("reports degraded remote stages with closed warning codes while staying exit 0", () => {
-    const run = runCli(["query", "embeddings", "--format", "json"], index.root);
+  it("reports degraded remote stages with closed warning codes while staying exit 0", async () => {
+    const run = await runCli(["query", "embeddings", "--format", "json"], index.root);
     const envelope = JSON.parse(run.stdout) as ResultEnvelope;
 
     expect(envelope.pipeline.status).toBe("degraded");
@@ -106,8 +106,8 @@ describe("query --format json", () => {
     }
   });
 
-  it("uses the QMD position score mode when reranking is degraded", () => {
-    const run = runCli(
+  it("uses the QMD position score mode when reranking is degraded", async () => {
+    const run = await runCli(
       ["query", "vector semantic", "--format", "json", "--explain"],
       index.root,
     );
@@ -129,42 +129,47 @@ describe("query --format json", () => {
     });
   });
 
-  it("honors --limit and --min-score on the public position score", () => {
-    const limited = JSON.parse(
-      runCli(
+  it("honors --limit and --min-score on the public position score", async () => {
+    const limited = (
+      await runCli(
         ["query", "vector semantic", "--format", "json", "-n", "1"],
         index.root,
-      ).stdout,
-    ) as ResultEnvelope;
-    expect(limited.results).toHaveLength(1);
+      )
+    ).stdout as string;
+    const limitedEnvelope = JSON.parse(limited) as ResultEnvelope;
+    expect(limitedEnvelope.results).toHaveLength(1);
 
     const filtered = JSON.parse(
-      runCli(
-        ["query", "vector semantic", "--format", "json", "--min-score", "0.6"],
-        index.root,
+      (
+        await runCli(
+          ["query", "vector semantic", "--format", "json", "--min-score", "0.6"],
+          index.root,
+        )
       ).stdout,
     ) as ResultEnvelope;
     expect(filtered.results.every((result) => result.score >= 0.6)).toBe(true);
     expect(filtered.results.length).toBeLessThan(
       (JSON.parse(
-        runCli(["query", "vector semantic", "--format", "json"], index.root)
+        (await runCli(["query", "vector semantic", "--format", "json"], index.root))
           .stdout,
       ) as ResultEnvelope).results.length,
     );
   });
 
-  it("supports -c/--collection filtering and rejects unknown collections safely", () => {
+  it("supports -c/--collection filtering and rejects unknown collections safely", async () => {
     const scoped = JSON.parse(
-      runCli(
-        ["query", "latency", "--format", "json", "-c", "docs"],
-        index.root,
+      (
+        await runCli(
+          ["query", "latency", "--format", "json", "-c", "docs"],
+          index.root,
+        )
       ).stdout,
     ) as ResultEnvelope;
     expect(scoped.query.collections).toEqual(["docs"]);
   });
 
-  it("prints No results found. semantics through an empty results array at exit 0", () => {
-    const run = runCli(
+  it("prints No results found. semantics through an empty results array at exit 0", async () => {
+    const run = await runCli(
       ["query", "zzzunmatchabletoken", "--format", "json"],
       index.root,
     );
@@ -174,8 +179,8 @@ describe("query --format json", () => {
     expect(envelope.results).toEqual([]);
   });
 
-  it("--full adds body and --no-rerank reports the disabled stage", () => {
-    const run = runCli(
+  it("--full adds body and --no-rerank reports the disabled stage", async () => {
+    const run = await runCli(
       [
         "query",
         "embeddings",
@@ -195,8 +200,8 @@ describe("query --format json", () => {
     expect(run.status).toBe(0);
   });
 
-  it("--require-remote fails with exit 4 and a required_remote error envelope", () => {
-    const run = runCli(
+  it("--require-remote fails with exit 4 and a required_remote error envelope", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--format", "json", "--require-remote"],
       index.root,
     );
@@ -216,8 +221,8 @@ describe("query --format json", () => {
 });
 
 describe("query human output", () => {
-  it("renders numbered results with qmd URI and docid, warnings to stderr", () => {
-    const run = runCli(["query", "embeddings"], index.root);
+  it("renders numbered results with qmd URI and docid, warnings to stderr", async () => {
+    const run = await runCli(["query", "embeddings"], index.root);
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("1. Alpha");
     expect(run.stdout).toContain("qmd://docs/alpha.md");
@@ -225,16 +230,16 @@ describe("query human output", () => {
     expect(run.stderr).toContain("Warning:");
   });
 
-  it("prints No results found. and exits 0 for zero matches", () => {
-    const run = runCli(["query", "zzzunmatchabletoken"], index.root);
+  it("prints No results found. and exits 0 for zero matches", async () => {
+    const run = await runCli(["query", "zzzunmatchabletoken"], index.root);
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("No results found.");
   });
 });
 
 describe("invocation errors", () => {
-  it("rejects unsupported options with exit 2 and a stderr error envelope in json mode", () => {
-    const run = runCli(["query", "term", "--all", "--format", "json"], index.root);
+  it("rejects unsupported options with exit 2 and a stderr error envelope in json mode", async () => {
+    const run = await runCli(["query", "term", "--all", "--format", "json"], index.root);
     expect(run.status).toBe(2);
     expect(run.stdout).toBe("");
     const envelope = expectSingleJson<ErrorEnvelope>(run.stderr);
@@ -245,9 +250,9 @@ describe("invocation errors", () => {
     });
   });
 
-  it("rejects out-of-range limits with invalid_invocation", () => {
+  it("rejects out-of-range limits with invalid_invocation", async () => {
     for (const limit of ["0", "81", "-3"]) {
-      const run = runCli(
+      const run = await runCli(
         ["query", "term", "-n", limit, "--format", "json"],
         index.root,
       );
@@ -257,24 +262,24 @@ describe("invocation errors", () => {
     }
   });
 
-  it("requires non-empty query text", () => {
-    const missing = runCli(["query", "--format", "json"], index.root);
+  it("requires non-empty query text", async () => {
+    const missing = await runCli(["query", "--format", "json"], index.root);
     expect(missing.status).toBe(2);
     expect(JSON.parse(missing.stderr).error.code).toBe("invalid_invocation");
 
-    const blank = runCli(["query", "   ", "--format", "json"], index.root);
+    const blank = await runCli(["query", "   ", "--format", "json"], index.root);
     expect(blank.status).toBe(2);
     expect(JSON.parse(blank.stderr).error.code).toBe("invalid_invocation");
   });
 
-  it("rejects multiple positional arguments instead of reinterpreting them", () => {
-    const run = runCli(["query", "one two", "three", "--format", "json"], index.root);
+  it("rejects multiple positional arguments instead of reinterpreting them", async () => {
+    const run = await runCli(["query", "one two", "three", "--format", "json"], index.root);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
   });
 
-  it("rejects unconfigured profiles as a configuration error", () => {
-    const run = runCli(
+  it("rejects unconfigured profiles as a configuration error", async () => {
+    const run = await runCli(
       ["query", "term", "--profile", "enterprise", "--format", "json"],
       index.root,
     );
@@ -286,8 +291,8 @@ describe("invocation errors", () => {
     });
   });
 
-  it("fails local-retrieval with exit 3 when no project index exists", () => {
-    const run = runCli(["query", "term", "--format", "json"], emptyDir);
+  it("fails local-retrieval with exit 3 when no project index exists", async () => {
+    const run = await runCli(["query", "term", "--format", "json"], emptyDir);
     expect(run.status).toBe(3);
     expect(run.stdout).toBe("");
     const envelope = expectSingleJson<ErrorEnvelope>(run.stderr);
@@ -297,8 +302,8 @@ describe("invocation errors", () => {
     });
   });
 
-  it("writes human-readable errors to stderr without envelopes", () => {
-    const run = runCli(["query", "term", "--all"], index.root);
+  it("writes human-readable errors to stderr without envelopes", async () => {
+    const run = await runCli(["query", "term", "--all"], index.root);
     expect(run.status).toBe(2);
     expect(run.stderr.startsWith("qmdx:")).toBe(true);
     expect(() => JSON.parse(run.stderr)).toThrow();

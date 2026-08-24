@@ -63,6 +63,18 @@ export function missingCredentialsError(
   );
 }
 
+export function preflightRequiredError(detail: string): QmdxError {
+  return new QmdxError("configuration", "preflight_required", detail);
+}
+
+export function privacyApprovalRequiredError(detail: string): QmdxError {
+  return new QmdxError(
+    "configuration",
+    "privacy_approval_required",
+    detail,
+  );
+}
+
 export function localIndexUnavailableError(detail: string): QmdxError {
   return new QmdxError("local_retrieval", "local_index_unavailable", detail);
 }

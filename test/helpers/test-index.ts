@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,11 +162,23 @@ export interface RunCliOptions {
   fakeEmbedDimension?: number;
 }
 
+export interface CliRunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Runs the built CLI as a child process and resolves when it exits. Uses
+ * asynchronous spawn (not spawnSync) so the test worker's event loop stays
+ * responsive while the child runs; tests that stub provider HTTP servers
+ * inside the worker depend on this to answer the child's requests.
+ */
 export function runCli(
   args: readonly string[],
   cwd: string,
   options: RunCliOptions = {},
-): { status: number | null; stdout: string; stderr: string } {
+): Promise<CliRunResult> {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   delete childEnv.NODE_OPTIONS;
   if (options.fakeEmbedDimension !== undefined) {
@@ -175,15 +187,41 @@ export function runCli(
   }
   Object.assign(childEnv, options.env ?? {});
 
-  const result = spawnSync(process.execPath, [BIN_PATH, ...args], {
-    cwd,
-    encoding: "utf8",
-    env: childEnv,
-    timeout: 60000,
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [BIN_PATH, ...args], {
+      cwd,
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill("SIGTERM");
+        reject(new Error(`CLI run timed out after 60000ms: qmdx ${args.join(" ")}`));
+      }
+    }, 60000);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+    child.on("close", (code) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: code, stdout, stderr });
+      }
+    });
   });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
 }

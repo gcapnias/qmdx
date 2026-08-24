@@ -1,7 +1,7 @@
 import type { EnvelopeWarning, ResultEnvelope } from "../core/envelope.js";
 import { systemClock } from "../core/clock.js";
 import { parseQueryArgs } from "./args.js";
-import { resolveSelectedProfile } from "../config/resolve.js";
+import { admitRemoteRoutes } from "../preflight/preflight.js";
 import type { CommandIo } from "./failure.js";
 import { emitFailure } from "./failure.js";
 import {
@@ -21,7 +21,11 @@ export async function runQueryCommand(
   const startedAt = systemClock.nowMs();
   try {
     const invocation = parseQueryArgs(argv);
-    resolveSelectedProfile(invocation.profile);
+    // Fail closed before any work: a selected profile must carry current
+    // approval and live checks, otherwise nothing is transmitted at all.
+    admitRemoteRoutes(invocation.profile, {
+      strict: invocation.requireRemote,
+    });
 
     const outcome = await runQuery(invocation);
     const envelope = outcome.envelope;
