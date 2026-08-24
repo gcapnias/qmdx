@@ -32,6 +32,14 @@ _Avoid_: Mutable benchmark configuration
 The real search behavior a relevance benchmark represents and for which its conclusions are valid.
 _Avoid_: Universal search quality
 
+**Controlled benchmark evidence**:
+Reproducible evidence captured through the public CLI with frozen inputs and, where appropriate, controlled provider substitutes. It can prove contracts, orchestration, measurement, and failure behavior but cannot establish a production acceptance outcome.
+_Avoid_: Live acceptance evidence, Accepted result
+
+**Live acceptance evidence**:
+Authoritative relevance, latency, reliability, billed-cost, and privacy evidence gathered with the frozen production candidate, current approved providers, the target workstation, and required human judgments.
+_Avoid_: Stub-provider evidence, Implementation test result
+
 **Headline query**:
 A real information need included in the benchmark's primary aggregate comparison. Its corpus answerability is established independently of candidate pipelines.
 _Avoid_: Test prompt
@@ -165,8 +173,8 @@ An acceptance result in which QMDX demonstrates a practically meaningful relevan
 _Avoid_: Weighted score, Relevance-at-any-cost
 
 **Acceptance outcome**:
-The final classification of an acceptance candidate as accepted, rejected, or inconclusive under the frozen comparison rules. An inconclusive candidate is not an improvement.
-_Avoid_: Benchmark score
+The final classification of an acceptance candidate as accepted, rejected, or inconclusive under the frozen comparison rules, based only on live acceptance evidence. Implementation completion and controlled benchmark evidence cannot produce this classification; an inconclusive candidate is not an improvement.
+_Avoid_: Benchmark score, Implementation complete
 
 **Remote inference**:
 Hosted model execution used by QMDX for query expansion or reranking.
@@ -185,7 +193,7 @@ A non-secret identifier in a route profile that QMDX resolves to a credential at
 _Avoid_: Stored credential, API-key flag
 
 **Route preflight**:
-The combination of static profile validation, an explicit authenticated live capability check with a short-lived non-secret result, and request-specific local admission checks. It establishes route eligibility without adding a separate remote probe to every search.
+The combination of static profile validation, current provider-catalog verification, an explicit authenticated live capability check with a short-lived non-secret result, and request-specific local admission checks. It establishes route eligibility without adding a separate remote probe to every search.
 _Avoid_: Billable per-search probe, Best-effort request
 
 **Privacy declaration**:
@@ -301,12 +309,16 @@ The single remote comparison set containing every reranking candidate as a disti
 _Avoid_: Independently scored batches, Deduplicated chunk set
 
 **Provider route admission**:
-The determination that a remote route can accept the complete reranking request and return one score per candidate without QMDX splitting or truncating it.
+The determination that a remote route can accept the complete reranking request and return one score per candidate, with conservative proof that no selected chunk or aggregate payload will be split or truncated.
 _Avoid_: Per-document size check, Runtime best effort
 
 **QMD position-aware reranking formula**:
-The final-score equation borrowed from QMD v2.8.3 and applied to a provider-native remote relevance score: retrieval contributes 0.75 at RRF ranks 1-3, 0.60 at ranks 4-10, and 0.40 thereafter. Sharing the equation does not make remote scores semantically equivalent to QMD's local reranker scores.
-_Avoid_: Exact QMD reranking equivalence, Pure reranker order
+The exact QMD v2.8.3 final-score equation `retrievalWeight * (1 / rrfRank) + (1 - retrievalWeight) * remoteScore`, where retrieval weight is 0.75 at ranks 1-3, 0.60 at ranks 4-10, and 0.40 thereafter. QMDX preserves its inherited rank-band behavior without normalizing the position score; sharing the equation does not make remote scores semantically equivalent to QMD's local reranker scores.
+_Avoid_: Normalized retrieval blend, Exact QMD reranking equivalence, Pure reranker order
+
+**Public search score**:
+The `[0,1]` score exposed in QMDX results and used by minimum-score filtering. It is the QMD position-aware blended score after successful remote reranking and `1 / qmdRrfRank` when reranking is degraded or disabled; pipeline state identifies which meaning applies.
+_Avoid_: Cross-search relevance probability, Always-reranked score
 
 **Remote relevance score**:
 A finite provider-produced value in the inclusive range `[0,1]` that compares every reranking candidate within one logical request. It is request-local, is not batch-normalized by QMDX, and is not comparable across unrelated searches.
