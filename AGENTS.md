@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues and PRDs are tracked in the local beads-rust tracker through the `br` CLI. See `docs/agents/issue-tracker.md`.
+Issues and specs are tracked as GitHub Issues through the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
