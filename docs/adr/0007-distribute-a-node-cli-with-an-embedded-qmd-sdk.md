@@ -1,0 +1,5 @@
+# Distribute a Node CLI with an embedded QMD SDK
+
+QMDX will be published as `@gcapnias/qmdx`, a TypeScript-to-native-ESM npm package that exposes the `qmdx` executable and requires Node.js 22 or later. Global, `npx`, and project-local installation are equally supported; Windows 11 x64 is the release-blocking platform, while Linux and macOS remain experimental until QMD's native dependency path is tested there. A standalone executable and a stable JavaScript or TypeScript library API were rejected for v1 because Node is already required by QMD and the CLI's versioned JSON envelope is the intended integration contract.
+
+QMDX will embed an exactly pinned `@tobilu/qmd` SDK, initially using the tested 2.8.3 baseline, rather than depend on or invoke an externally installed `qmd` CLI. Other dependencies may use bounded semantic-version ranges with a committed `package-lock.json` and `npm ci` for reproducible builds. QMD SDK upgrades require compatibility and representative-index regression tests and at least a QMDX minor release; QMDX will use only public SDK capabilities for compatibility checks and will not inspect QMD's SQLite schema directly.
