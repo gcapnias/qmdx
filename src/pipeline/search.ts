@@ -8,7 +8,8 @@ import {
   type SearchResultItem,
 } from "../core/envelope.js";
 import { internalError } from "../core/errors.js";
-import type { ReasonCode } from "../core/enums.js";import { fetchCandidatePool } from "../qmd/retrieval.js";
+import type { ReasonCode } from "../core/enums.js";
+import { fetchCandidatePool } from "../qmd/retrieval.js";
 import { findProjectIndex } from "../qmd/paths.js";
 import { openProjectStore } from "../qmd/store.js";
 import {
@@ -19,7 +20,12 @@ import {
 import { localIndexUnavailableError } from "../core/errors.js";
 
 export interface QueryRequest {
+  /** Exact user-supplied query text, reflected verbatim in the envelope. */
   originalQuery: string;
+  /** Plain-query expansion input; null for typed documents without one. */
+  plainQuery: string | null;
+  /** Explicit typed retrieval routes from a query document. */
+  routes: ExpandedQuery[];
   intent: string | null;
   collections: string[];
   limit: number;
@@ -28,6 +34,12 @@ export interface QueryRequest {
   explain: boolean;
   noExpand: boolean;
   noRerank: boolean;
+}
+
+export interface QueryOutcome {
+  envelope: ResultEnvelope;
+  /** QMD display path per result, aligned with envelope.results indexes. */
+  resultPaths: string[];
 }
 
 export interface SearchDeps {
@@ -45,7 +57,7 @@ const UNCONFIGURED_ROUTE_CODE: ReasonCode = "provider_unavailable";
 export async function runQuery(
   request: QueryRequest,
   deps: SearchDeps = {},
-): Promise<ResultEnvelope> {
+): Promise<QueryOutcome> {
   const clock = deps.clock ?? systemClock;
   const warnings: EnvelopeWarning[] = [];
   const startedAt = clock.nowMs();
@@ -55,7 +67,7 @@ export async function runQuery(
   const retrieval = await retrievalStage(request, warnings, timing, clock);
   const reranking = rerankingStage(retrieval.pool.length, request, warnings);
 
-  const ordered = shapeResults(
+  const shaped = shapeResults(
     retrieval.pool,
     request,
     reranking.remoteRerankScores,
@@ -64,7 +76,7 @@ export async function runQuery(
   const totalMs = clock.nowMs() - startedAt;
   const stageSum = timing.expansionMs + timing.retrievalMs + timing.rerankingMs;
 
-  return buildResultEnvelope({
+  const envelope = buildResultEnvelope({
     query: {
       original: request.originalQuery,
       intent: request.intent,
@@ -85,7 +97,7 @@ export async function runQuery(
         candidateCount: retrieval.pool.length,
       },
     },
-    results: ordered,
+    results: shaped.results,
     warnings,
     timingMs: {
       total: totalMs,
@@ -95,6 +107,8 @@ export async function runQuery(
       overhead: Math.max(0, round6(totalMs - stageSum)),
     },
   });
+
+  return { envelope, resultPaths: shaped.paths };
 }
 
 function expansionStage(
@@ -105,7 +119,7 @@ function expansionStage(
 ) {
   const stageStart = clock.nowMs();
   try {
-    if (request.noExpand) {
+    if (request.noExpand || request.plainQuery === null) {
       return {
         status: "disabled" as const,
         reason: null,
@@ -161,7 +175,12 @@ async function retrievalStage(
 }
 
 function retrievalRoutes(request: QueryRequest): ExpandedQuery[] {
-  void request;
+  if (request.routes.length > 0) {
+    return request.routes.map((route) => ({
+      type: route.type,
+      query: route.query,
+    }));
+  }
   return [{ type: "lex", query: request.originalQuery }];
 }
 
@@ -206,7 +225,7 @@ function shapeResults(
   pool: HybridQueryResult[],
   request: QueryRequest,
   _remoteRerankScores: Map<HybridQueryResult, number> | null,
-): SearchResultItem[] {
+): { results: SearchResultItem[]; paths: string[] } {
   const scored = pool.map((entry) => ({
     entry,
     rrfRank: rrfRankOf(entry),
@@ -224,9 +243,11 @@ function shapeResults(
     ? scored
     : scored.filter((item) => item.publicScore >= request.minScore!);
 
-  return filtered.slice(0, request.limit).map((item, index) => {
+  const results: SearchResultItem[] = [];
+  const paths: string[] = [];
+  for (const item of filtered.slice(0, request.limit)) {
     const result: SearchResultItem = {
-      rank: index + 1,
+      rank: results.length + 1,
       docid: `#${item.entry.docid}`,
       score: item.publicScore,
       file: item.entry.file,
@@ -241,8 +262,14 @@ function shapeResults(
     if (request.explain) {
       result.explanation = explanationFor(item.rrfRank, item.publicScore);
     }
-    return result;
-  });
+    results.push(result);
+    paths.push(
+      typeof item.entry.displayPath === "string" && item.entry.displayPath !== ""
+        ? item.entry.displayPath
+        : item.entry.file,
+    );
+  }
+  return { results, paths };
 }
 
 function rrfRankOf(entry: HybridQueryResult): number {

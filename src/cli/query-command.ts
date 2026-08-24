@@ -29,7 +29,8 @@ export async function runQueryCommand(
       );
     }
 
-    const envelope = await runQuery(invocation);
+    const outcome = await runQuery(invocation);
+    const envelope = outcome.envelope;
 
     if (invocation.requireRemote) {
       const failedStage = firstFailingRemoteStage(envelope);
@@ -45,7 +46,11 @@ export async function runQueryCommand(
     if (invocation.format === "json") {
       renderResultEnvelope(streams, envelope);
     } else {
-      renderHumanResults(streams, envelope);
+      renderHumanResults(streams, envelope, {
+        fullPath: invocation.fullPath,
+        lineNumbers: invocation.lineNumbers,
+        paths: outcome.resultPaths,
+      });
     }
     return 0;
   } catch (error) {

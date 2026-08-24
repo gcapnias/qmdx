@@ -3,6 +3,7 @@ import {
   unsupportedOptionError,
 } from "../core/errors.js";
 import type { QueryRequest } from "../pipeline/search.js";
+import { parseQueryDocument } from "./query-document.js";
 
 export const SUPPORTED_FLAGS = [
   "-n",
@@ -56,7 +57,7 @@ export function parseQueryArgs(argv: readonly string[]): ParsedQueryInvocation {
   const collections: string[] = [];
   let limit = 10;
   let minScore: number | null = null;
-  let intent: string | null = null;
+  let intentFlag: string | null = null;
   let format: "human" | "json" = "human";
   let profile: string | null = null;
 
@@ -91,7 +92,7 @@ export function parseQueryArgs(argv: readonly string[]): ParsedQueryInvocation {
         collections.push(value);
         break;
       case "--intent":
-        intent = value;
+        intentFlag = value;
         break;
       case "--format":
         format = parseFormat(value);
@@ -102,15 +103,36 @@ export function parseQueryArgs(argv: readonly string[]): ParsedQueryInvocation {
     }
   }
 
+  const noExpand = argv.includes("--no-expand");
+  const rawQuery = extractRawQuery(positional);
+  const document = parseQueryDocument(rawQuery);
+
+  if (
+    document.plainQuery !== null &&
+    [...document.plainQuery].length > 2048
+  ) {
+    throw invalidInvocationError(
+      "query text exceeds the maximum of 2048 Unicode characters",
+    );
+  }
+
+  if (document.plainQuery === null && !noExpand) {
+    throw invalidInvocationError(
+      "Typed query documents without a plain query are valid only with --no-expand.",
+    );
+  }
+
   return {
-    originalQuery: extractQuery(positional),
-    intent,
+    originalQuery: rawQuery,
+    plainQuery: document.plainQuery,
+    routes: document.routes,
+    intent: intentFlag ?? document.documentIntent,
     collections,
     limit,
     minScore,
     full: argv.includes("--full"),
     explain: argv.includes("--explain"),
-    noExpand: argv.includes("--no-expand"),
+    noExpand,
     noRerank: argv.includes("--no-rerank"),
     fullPath: argv.includes("--full-path"),
     lineNumbers: argv.includes("--line-numbers"),
@@ -120,7 +142,7 @@ export function parseQueryArgs(argv: readonly string[]): ParsedQueryInvocation {
   };
 }
 
-function extractQuery(positional: readonly string[]): string {
+function extractRawQuery(positional: readonly string[]): string {
   if (positional.length === 0) {
     throw invalidInvocationError("query text is required");
   }
@@ -132,11 +154,6 @@ function extractQuery(positional: readonly string[]): string {
   const query = positional[0]!;
   if (query.trim() === "") {
     throw invalidInvocationError("query text is required");
-  }
-  if ([...query].length > 2048) {
-    throw invalidInvocationError(
-      "query text exceeds the maximum of 2048 Unicode characters",
-    );
   }
   return query;
 }
