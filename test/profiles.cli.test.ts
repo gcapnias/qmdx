@@ -8,8 +8,28 @@ import {
   type TestIndex,
 } from "./helpers/test-index.js";
 import type { ErrorEnvelope, ResultEnvelope } from "../src/core/envelope.js";
+import { reviewedProviderPricing } from "../src/core/pricing.js";
+import { computeProfilePreflightFingerprint } from "../src/preflight/fingerprint.js";
+import {
+  fingerprintPrivacyDeclaration,
+  type PrivacyDeclaration,
+} from "../src/preflight/privacy.js";
+import { savePreflightState } from "../src/preflight/state.js";
 
 const SECRET = "sk-qmdx-test-literal-secret-9f2a";
+
+const DECLARATION: PrivacyDeclaration = {
+  declarationVersion: 1,
+  endpoint: "https://api.openai.com/v1",
+  region: "us",
+  stagePayloads: {
+    expansion: "The original query text only.",
+    reranking: "Selected chunks plus a request-local correlation id.",
+  },
+  retention: "Zero retention; prompts and outputs are not stored.",
+  trainingUse: "Provider terms exclude this workload from training.",
+  reviewedSources: ["https://openai.com/policies", "https://cohere.com/legal"],
+};
 
 const CONFIG = {
   version: 1,
@@ -29,10 +49,67 @@ const CONFIG = {
         credentialEnv: "QMDX_TEST_RERANKING_KEY",
       },
       policy: {},
-      privacy: {},
+      privacy: { declaration: DECLARATION },
     },
   },
 } as const;
+
+/**
+ * Seeds the local preflight state (approval + current live checks) for the
+ * fixture profile so these ticket-#7 CLI wiring tests keep exercising their
+ * own concerns offline instead of contacting real provider catalogs.
+ */
+function seedDefaultProfilePreflight(configDirPath: string): void {
+  const fingerprint = computeProfilePreflightFingerprint({
+    expansion: {
+      provider: "openai",
+      endpoint: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      credentialEnv: "QMDX_TEST_EXPANSION_KEY",
+    },
+    reranking: {
+      provider: "cohere",
+      endpoint: "https://api.cohere.com",
+      model: "rerank-v4.0-pro",
+      credentialEnv: "QMDX_TEST_RERANKING_KEY",
+    },
+    expansionPricing: reviewedProviderPricing.rateFor("openai", "gpt-4o-mini"),
+    rerankingPricing: reviewedProviderPricing.rateFor("cohere", "rerank-v4.0-pro"),
+    privacyDeclarationFingerprint: fingerprintPrivacyDeclaration(DECLARATION),
+  });
+  const now = Date.now();
+  const evidence = (stage: "expansion" | "reranking", modelsUrl: string) => ({
+    stage,
+    providerKind: stage === "expansion" ? ("openai-compatible" as const) : ("cohere" as const),
+    modelsUrl,
+    modelListed: true,
+    strictSchemaRequired: stage === "expansion" ? true : null,
+    declaredEndpoints: null,
+  });
+  savePreflightState(
+    {
+      schemaVersion: 1,
+      profiles: {
+        default: {
+          approval: { fingerprint, approvedAtMs: now },
+          liveChecks: {
+            expansion: {
+              fingerprint,
+              checkedAtMs: now,
+              evidence: evidence("expansion", "https://api.openai.com/v1/models"),
+            },
+            reranking: {
+              fingerprint,
+              checkedAtMs: now,
+              evidence: evidence("reranking", "https://api.cohere.com/v1/models?page_size=1000"),
+            },
+          },
+        },
+      },
+    },
+    { filePath: join(configDirPath, "state.json") },
+  );
+}
 
 const LITERAL_CONFIG = {
   version: 1,
@@ -82,6 +159,7 @@ beforeAll(async () => {
     JSON.stringify(LITERAL_CONFIG),
     "utf8",
   );
+  seedDefaultProfilePreflight(configDir);
 }, 240000);
 
 afterAll(() => {
@@ -91,8 +169,8 @@ afterAll(() => {
 });
 
 describe("profile configuration through the CLI", () => {
-  it("uses the configured default profile when no --profile is supplied", () => {
-    const run = runCli(
+  it("uses the configured default profile when no --profile is supplied", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--format", "json"],
       index.root,
       { env: withConfigEnv() },
@@ -104,8 +182,8 @@ describe("profile configuration through the CLI", () => {
     expect(envelope.results.length).toBeGreaterThan(0);
   });
 
-  it("selects an explicit --profile and still completes locally", () => {
-    const run = runCli(
+  it("selects an explicit --profile and still completes locally", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--format", "json", "--profile", "default"],
       index.root,
       { env: withConfigEnv() },
@@ -115,8 +193,8 @@ describe("profile configuration through the CLI", () => {
     expect(envelope.results.length).toBeGreaterThan(0);
   });
 
-  it("rejects an unconfigured profile name as invalid_profile at exit 2", () => {
-    const run = runCli(
+  it("rejects an unconfigured profile name as invalid_profile at exit 2", async () => {
+    const run = await runCli(
       ["query", "term", "--format", "json", "--profile", "enterprise"],
       index.root,
       { env: withConfigEnv() },
@@ -132,10 +210,10 @@ describe("profile configuration through the CLI", () => {
     });
   });
 
-  it("fails with missing_credentials when the declared env variable is unset", () => {
+  it("fails with missing_credentials when the declared env variable is unset", async () => {
     const env = withConfigEnv();
     delete env.QMDX_TEST_RERANKING_KEY;
-    const run = runCli(
+    const run = await runCli(
       ["query", "term", "--format", "json"],
       index.root,
       { env: env },
@@ -150,8 +228,8 @@ describe("profile configuration through the CLI", () => {
     expect(envelope.error.message).toContain("QMDX_TEST_RERANKING_KEY");
   });
 
-  it("rejects literal credentials stored in profile content without echoing them", () => {
-    const run = runCli(
+  it("rejects literal credentials stored in profile content without echoing them", async () => {
+    const run = await runCli(
       ["query", "term", "--format", "json", "--profile", "literal"],
       index.root,
       { env: withLiteralConfigEnv() },
@@ -163,8 +241,8 @@ describe("profile configuration through the CLI", () => {
     expect(run.stdout).not.toContain(SECRET);
   });
 
-  it("never exposes the resolved credential in results, errors, or diagnostics", () => {
-    const ok = runCli(
+  it("never exposes the resolved credential in results, errors, or diagnostics", async () => {
+    const ok = await runCli(
       ["query", "embeddings", "--format", "json", "--explain", "--full"],
       index.root,
       { env: withConfigEnv() },
@@ -173,7 +251,7 @@ describe("profile configuration through the CLI", () => {
     expect(ok.stdout).not.toContain(SECRET);
     expect(`${ok.stdout}${ok.stderr}`).not.toContain(`${SECRET}-rerank`);
 
-    const failing = runCli(
+    const failing = await runCli(
       ["query", "term", "--format", "json", "--profile", "nope"],
       index.root,
       { env: withConfigEnv() },
@@ -184,8 +262,8 @@ describe("profile configuration through the CLI", () => {
 });
 
 describe("setup and doctor profile wiring", () => {
-  it("setup resolves the default profile and prints only the env-var name", () => {
-    const run = runCli(["setup"], index.root, {
+  it("setup resolves the default profile and prints only the env-var name", async () => {
+    const run = await runCli(["setup"], index.root, {
       env: withConfigEnv(),
       fakeEmbedDimension: 8,
     });
@@ -195,8 +273,8 @@ describe("setup and doctor profile wiring", () => {
     expect(run.stdout).not.toContain(SECRET);
   });
 
-  it("doctor accepts --profile and reports both routes", () => {
-    const run = runCli(
+  it("doctor accepts --profile and reports both routes", async () => {
+    const run = await runCli(
       ["doctor", "--profile", "default"],
       index.root,
       { env: withConfigEnv(), fakeEmbedDimension: 8 },
@@ -208,8 +286,8 @@ describe("setup and doctor profile wiring", () => {
     expect(run.stdout).not.toContain(SECRET);
   });
 
-  it("setup fails closed on invalid profiles or missing credentials", () => {
-    const badProfile = runCli(
+  it("setup fails closed on invalid profiles or missing credentials", async () => {
+    const badProfile = await runCli(
       ["setup", "--profile", "enterprise"],
       index.root,
       { env: withConfigEnv() },
@@ -219,15 +297,15 @@ describe("setup and doctor profile wiring", () => {
 
     const env = withConfigEnv();
     delete env.QMDX_TEST_EXPANSION_KEY;
-    const noCreds = runCli(["setup"], index.root, { env });
+    const noCreds = await runCli(["setup"], index.root, { env });
     expect(noCreds.status).toBe(2);
     expect(noCreds.stderr).toContain("is not set");
     expect(noCreds.stderr).toContain("QMDX_TEST_EXPANSION_KEY");
     expect(noCreds.stderr).not.toContain(SECRET);
   });
 
-  it("rejects unsupported setup/doctor options as invocation errors", () => {
-    const run = runCli(["doctor", "--all"], index.root, { env: withConfigEnv() });
+  it("rejects unsupported setup/doctor options as invocation errors", async () => {
+    const run = await runCli(["doctor", "--all"], index.root, { env: withConfigEnv() });
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("Unsupported option \"--all\"");
   });

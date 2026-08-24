@@ -23,27 +23,27 @@ afterAll(() => {
   void index;
 });
 
-function jsonRun(args: readonly string[]): {
+async function jsonRun(args: readonly string[]): Promise<{
   status: number | null;
   stdout: string;
   stderr: string;
-} {
-  return runCli([...args, "--format", "json"], index.root);
+}> {
+  return await runCli([...args, "--format", "json"], index.root);
 }
 
 describe("supported options: limits stay output-only", () => {
-  it("accepts the full approved range including both boundaries", () => {
+  it("accepts the full approved range including both boundaries", async () => {
     for (const limit of ["1", "10", "80"]) {
-      const run = jsonRun(["query", "vector", "-n", limit]);
+      const run = await jsonRun(["query", "vector", "-n", limit]);
       expect(run.status).toBe(0);
       const envelope = JSON.parse(run.stdout) as ResultEnvelope;
       expect(envelope.results.length).toBeLessThanOrEqual(Number(limit));
     }
   });
 
-  it("truncates only the final output while candidate depth stays internal", () => {
+  it("truncates only the final output while candidate depth stays internal", async () => {
     const limited = JSON.parse(
-      jsonRun(["query", "vector", "-n", "1"]).stdout,
+      (await jsonRun(["query", "vector", "-n", "1"])).stdout,
     ) as ResultEnvelope;
     expect(limited.results).toHaveLength(1);
     expect(limited.pipeline.retrieval.candidateCount).toBeGreaterThan(1);
@@ -51,8 +51,8 @@ describe("supported options: limits stay output-only", () => {
 });
 
 describe("supported options: intent", () => {
-  it("reflects --intent in the envelope and completes successfully", () => {
-    const run = jsonRun(["query", "vector", "--intent", "ranking internals"]);
+  it("reflects --intent in the envelope and completes successfully", async () => {
+    const run = await jsonRun(["query", "vector", "--intent", "ranking internals"]);
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     const envelope = JSON.parse(run.stdout) as ResultEnvelope;
@@ -62,32 +62,32 @@ describe("supported options: intent", () => {
 });
 
 describe("supported options: path and line-number presentation", () => {
-  it("--full-path shows QMD display paths instead of qmd:// URIs", () => {
-    const run = runCli(["query", "embeddings", "--full-path"], index.root);
+  it("--full-path shows QMD display paths instead of qmd:// URIs", async () => {
+    const run = await runCli(["query", "embeddings", "--full-path"], index.root);
     expect(run.status).toBe(0);
     expect(run.stdout).not.toContain("qmd://");
     expect(run.stdout).toContain("docs/alpha.md");
   });
 
-  it("default human output keeps qmd:// URIs", () => {
-    const run = runCli(["query", "embeddings"], index.root);
+  it("default human output keeps qmd:// URIs", async () => {
+    const run = await runCli(["query", "embeddings"], index.root);
     expect(run.stdout).toContain("qmd://docs/alpha.md");
   });
 
-  it("--line-numbers numbers snippet lines from the chunk position", () => {
+  it("--line-numbers numbers snippet lines from the chunk position", async () => {
     const baseline = JSON.parse(
-      jsonRun(["query", "embeddings"]).stdout,
+      (await jsonRun(["query", "embeddings"])).stdout,
     ) as ResultEnvelope;
     const top = baseline.results[0]!;
     expect(top.line).not.toBeNull();
 
-    const run = runCli(["query", "embeddings", "--line-numbers"], index.root);
+    const run = await runCli(["query", "embeddings", "--line-numbers"], index.root);
     expect(run.status).toBe(0);
     expect(run.stdout).toContain(`${(top.line ?? -1) + 1}: `);
   });
 
-  it("--line-numbers with --full numbers the body from line 1", () => {
-    const run = runCli(
+  it("--line-numbers with --full numbers the body from line 1", async () => {
+    const run = await runCli(
       ["query", "embeddings", "--full", "--line-numbers"],
       index.root,
     );
@@ -95,13 +95,13 @@ describe("supported options: path and line-number presentation", () => {
     expect(run.stdout).toMatch(/(^|\n)  1: /);
   });
 
-  it("--full prints the complete body in human output too", () => {
-    const run = runCli(["query", "embeddings", "--full"], index.root);
+  it("--full prints the complete body in human output too", async () => {
+    const run = await runCli(["query", "embeddings", "--full"], index.root);
     expect(run.stdout).toContain("Vector embeddings power semantic search");
   });
 
-  it("presentation flags leave JSON envelope fields untouched", () => {
-    const run = jsonRun([
+  it("presentation flags leave JSON envelope fields untouched", async () => {
+    const run = await jsonRun([
       "query",
       "embeddings",
       "--full-path",
@@ -115,8 +115,8 @@ describe("supported options: path and line-number presentation", () => {
 });
 
 describe("typed query documents", () => {
-  it("runs an explicit lex route with --no-expand through QMD structured search", () => {
-    const run = jsonRun(["query", "lex: embeddings", "--no-expand"]);
+  it("runs an explicit lex route with --no-expand through QMD structured search", async () => {
+    const run = await jsonRun(["query", "lex: embeddings", "--no-expand"]);
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     const envelope = JSON.parse(run.stdout) as ResultEnvelope;
@@ -126,9 +126,9 @@ describe("typed query documents", () => {
     expect(envelope.results.length).toBeGreaterThan(0);
   });
 
-  it("preserves explicit multi-route documents verbatim", () => {
+  it("preserves explicit multi-route documents verbatim", async () => {
     const document = "lex: embeddings\nvec: semantic search\nhyde: notes about vectors";
-    const run = jsonRun(["query", document, "--no-expand"]);
+    const run = await jsonRun(["query", document, "--no-expand"]);
     expect(run.status).toBe(0);
     const envelope = JSON.parse(run.stdout) as ResultEnvelope;
     expect(envelope.query.original).toBe(document);
@@ -136,8 +136,8 @@ describe("typed query documents", () => {
     expect(envelope.results.length).toBeGreaterThan(0);
   });
 
-  it("rejects a document without a plain query unless --no-expand is given", () => {
-    const run = jsonRun(["query", "lex: embeddings"]);
+  it("rejects a document without a plain query unless --no-expand is given", async () => {
+    const run = await jsonRun(["query", "lex: embeddings"]);
     expect(run.status).toBe(2);
     expect(run.stdout).toBe("");
     const envelope = JSON.parse(run.stderr) as ErrorEnvelope;
@@ -148,15 +148,15 @@ describe("typed query documents", () => {
     });
   });
 
-  it("rejects expand: because local expansion is outside the compatible perimeter", () => {
-    const run = jsonRun(["query", "expand: embeddings"]);
+  it("rejects expand: because local expansion is outside the compatible perimeter", async () => {
+    const run = await jsonRun(["query", "expand: embeddings"]);
     expect(run.status).toBe(2);
     const envelope = JSON.parse(run.stderr) as ErrorEnvelope;
     expect(envelope.error.code).toBe("unsupported_option");
   });
 
-  it("honors an intent: line from the document", () => {
-    const run = jsonRun([
+  it("honors an intent: line from the document", async () => {
+    const run = await jsonRun([
       "query",
       "lex: embeddings\nintent: ranking behavior",
       "--no-expand",
@@ -166,8 +166,8 @@ describe("typed query documents", () => {
     expect(envelope.query.intent).toBe("ranking behavior");
   });
 
-  it("lets the --intent flag take precedence over a document intent line", () => {
-    const run = jsonRun([
+  it("lets the --intent flag take precedence over a document intent line", async () => {
+    const run = await jsonRun([
       "query",
       "lex: embeddings\nintent: document intent",
       "--intent",
@@ -179,45 +179,45 @@ describe("typed query documents", () => {
     expect(envelope.query.intent).toBe("flag intent");
   });
 
-  it("rejects an intent: line appearing alone", () => {
-    const run = jsonRun(["query", "intent: ranking", "--no-expand"]);
+  it("rejects an intent: line appearing alone", async () => {
+    const run = await jsonRun(["query", "intent: ranking", "--no-expand"]);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
   });
 
-  it("rejects mixed plain and typed lines like QMD does", () => {
-    const run = jsonRun(["query", "lex: embeddings\nplain text", "--no-expand"]);
+  it("rejects mixed plain and typed lines like QMD does", async () => {
+    const run = await jsonRun(["query", "lex: embeddings\nplain text", "--no-expand"]);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
   });
 
-  it("rejects lex routes with an unmatched double quote", () => {
-    const run = jsonRun(["query", 'lex: "embeddings', "--no-expand"]);
+  it("rejects lex routes with an unmatched double quote", async () => {
+    const run = await jsonRun(["query", 'lex: "embeddings', "--no-expand"]);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
   });
 
-  it("rejects negation syntax in vec and hyde routes", () => {
+  it("rejects negation syntax in vec and hyde routes", async () => {
     for (const document of ["vec: -term", "hyde: -term"]) {
-      const run = jsonRun(["query", document, "--no-expand"]);
+      const run = await jsonRun(["query", document, "--no-expand"]);
       expect(run.status).toBe(2);
       expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
     }
   });
 
-  it("enforces the 2048-character expansion-input limit on plain queries only", () => {
+  it("enforces the 2048-character expansion-input limit on plain queries only", async () => {
     const oversizedPlain = "x".repeat(2049);
-    const run = jsonRun(["query", oversizedPlain]);
+    const run = await jsonRun(["query", oversizedPlain]);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
 
     const oversizedTyped = `lex: ${"x".repeat(3000)}`;
-    const ok = jsonRun(["query", oversizedTyped, "--no-expand", "-c", "docs"]);
+    const ok = await jsonRun(["query", oversizedTyped, "--no-expand", "-c", "docs"]);
     expect(ok.status).toBe(0);
   });
 
-  it("keeps min-score filtering working against explicit typed routes", () => {
-    const run = jsonRun([
+  it("keeps min-score filtering working against explicit typed routes", async () => {
+    const run = await jsonRun([
       "query",
       "lex: embeddings",
       "--no-expand",
@@ -252,8 +252,8 @@ describe("rejected QMD surface", () => {
   ];
 
   for (const option of REJECTED_OPTIONS) {
-    it(`reports ${option.join(" ")} as unsupported_option instead of ignoring it`, () => {
-      const run = jsonRun(["query", "vector", ...option]);
+    it(`reports ${option.join(" ")} as unsupported_option instead of ignoring it`, async () => {
+      const run = await jsonRun(["query", "vector", ...option]);
       expect(run.status).toBe(2);
       expect(run.stdout).toBe("");
       const envelope = JSON.parse(run.stderr) as ErrorEnvelope;
@@ -268,14 +268,14 @@ describe("rejected QMD surface", () => {
     });
   }
 
-  it("names the offending option in the error message", () => {
-    const run = runCli(["query", "vector", "--all"], index.root);
+  it("names the offending option in the error message", async () => {
+    const run = await runCli(["query", "vector", "--all"], index.root);
     expect(run.stderr).toContain("--all");
   });
 
-  it("rejects out-of-range limits and non-numeric scores as invalid invocation", () => {
+  it("rejects out-of-range limits and non-numeric scores as invalid invocation", async () => {
     for (const args of [["-n", "81"], ["-n", "0"], ["--min-score", "1.5"], ["--min-score", "abc"]]) {
-      const run = jsonRun(["query", "vector", ...args]);
+      const run = await jsonRun(["query", "vector", ...args]);
       expect(run.status).toBe(2);
       expect(JSON.parse(run.stderr).error.code).toBe("invalid_invocation");
     }

@@ -7,6 +7,11 @@ import {
   routeDiagnostic,
   type EffectiveProfile,
 } from "../config/resolve.js";
+import {
+  refreshProfilePreflight,
+  type ProfilePreflightReport,
+} from "../preflight/preflight.js";
+import { obtainExplicitApproval } from "./approval.js";
 import { findProjectIndex } from "../qmd/paths.js";
 import { openProjectStore } from "../qmd/store.js";
 import type { CommandIo } from "./failure.js";
@@ -54,6 +59,23 @@ function parseReadinessArgs(argv: readonly string[]): ReadinessInvocation {
   return invocation;
 }
 
+export interface RoutePreflightDiagnostics {
+  profile: string;
+  fingerprint: string;
+  privacy: {
+    declarationVersion: number;
+    endpoint: string;
+    region: string;
+    retention: string;
+    trainingUse: string;
+  };
+  approval: { current: boolean };
+  stages: Record<
+    "expansion" | "reranking",
+    { reused: boolean; checkedAtMs: number; modelListed: boolean }
+  >;
+}
+
 export interface ReadinessDiagnostics {
   schemaVersion: 1;
   command: ReadinessCommandName;
@@ -66,8 +88,9 @@ export interface ReadinessDiagnostics {
     incompletePercent: number;
     hasVectorIndex: boolean;
     vectorProbeResults: number;
-    daysStale: number | null;
+    daysStale: null | number;
   };
+  routes?: RoutePreflightDiagnostics;
   warnings: Array<{ code: string; message: string }>;
   timingMs: { total: number };
 }
@@ -95,6 +118,26 @@ export async function runReadinessCommand(
       }
     }
     const report = await validateProjectIndex();
+    const routePreflight: ProfilePreflightReport | null =
+      effectiveProfile !== null
+        ? await refreshProfilePreflight(invocation.profile)
+        : null;
+    if (routePreflight !== null) {
+      if (command === "setup" && !routePreflight.approvalCurrent) {
+        await obtainExplicitApproval(
+          invocation.profile,
+          routePreflight.profile,
+          routePreflight.fingerprint,
+          routePreflight.declaration,
+          streams.stderr,
+          { quiet: invocation.format === "json" },
+        );
+        routePreflight.approvalCurrent = true;
+      }
+      if (invocation.format === "human") {
+        renderRoutePreflight(streams, command, routePreflight);
+      }
+    }
 
     if (invocation.format === "json") {
       const diagnostics: ReadinessDiagnostics = {
@@ -111,6 +154,9 @@ export async function runReadinessCommand(
           vectorProbeResults: report.probeResults,
           daysStale: report.daysStale,
         },
+        ...(routePreflight !== null
+          ? { routes: routePreflightDiagnostics(routePreflight) }
+          : {}),
         warnings: report.warnings.map((warning) => ({
           code: warning.code,
           message: warning.message,
@@ -139,6 +185,67 @@ async function validateProjectIndex(): Promise<IndexReadinessReport> {
     return await validateIndexReadiness(opened);
   } finally {
     opened.store.close();
+  }
+}
+
+function routePreflightDiagnostics(
+  report: ProfilePreflightReport,
+): RoutePreflightDiagnostics {
+  return {
+    profile: report.profile,
+    fingerprint: report.fingerprint,
+    privacy: {
+      declarationVersion: report.declaration.declarationVersion,
+      endpoint: report.declaration.endpoint,
+      region: report.declaration.region,
+      retention: report.declaration.retention,
+      trainingUse: report.declaration.trainingUse,
+    },
+    approval: { current: report.approvalCurrent },
+    stages: {
+      expansion: {
+        reused: report.stages.expansion!.reused,
+        checkedAtMs: report.stages.expansion!.checkedAtMs,
+        modelListed: report.stages.expansion!.evidence?.modelListed ?? false,
+      },
+      reranking: {
+        reused: report.stages.reranking!.reused,
+        checkedAtMs: report.stages.reranking!.checkedAtMs,
+        modelListed: report.stages.reranking!.evidence?.modelListed ?? false,
+      },
+    },
+  };
+}
+
+function renderRoutePreflight(
+  streams: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream },
+  command: ReadinessCommandName,
+  report: ProfilePreflightReport,
+): void {
+  for (const stage of ["expansion", "reranking"] as const) {
+    const outcome = report.stages[stage]!;
+    const evidence = outcome.evidence;
+    const state = evidence === null
+      ? "no capability evidence"
+      : `model listed=${evidence.modelListed}`;
+    streams.stdout.write(
+      `${command} ${stage} live check: ok (${state}, checked ${outcome.reused ? "previously" : "now"})\n`,
+    );
+  }
+  streams.stdout.write(
+    `Privacy declaration v${report.declaration.declarationVersion} for profile "${report.profile}" ` +
+      `(endpoint ${report.declaration.endpoint}, region ${report.declaration.region}).\n`,
+  );
+  if (command === "setup") {
+    streams.stdout.write(
+      report.approvalCurrent
+        ? `Privacy approval for profile "${report.profile}" is current.\n`
+        : `Privacy approval recorded for profile "${report.profile}".\n`,
+    );
+  } else if (!report.approvalCurrent) {
+    streams.stderr.write(
+      `Warning: profile "${report.profile}" has no current privacy approval; searches will fail closed until \`qmdx setup\` approves it.\n`,
+    );
   }
 }
 

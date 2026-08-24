@@ -35,6 +35,7 @@ export {
 } from "./config/store.js";
 export {
   BUILT_IN_ROUTES,
+  loadSelectedRawProfile,
   resolveSelectedProfile,
   resolveCredential,
   routeDiagnostic,
@@ -45,3 +46,48 @@ export {
   type RouteCliOverrides,
 } from "./config/resolve.js";
 export { REQUIRED_EMBED_MODEL } from "./qmd/store.js";
+export {
+  PREFLIGHT_CAPABILITY_VERSION,
+  computeProfilePreflightFingerprint,
+  sha256Hex,
+  stableStringify,
+} from "./preflight/fingerprint.js";
+export {
+  fingerprintPrivacyDeclaration,
+  parsePrivacyDeclaration,
+  type PrivacyDeclaration,
+} from "./preflight/privacy.js";
+export {
+  checkCohereCapabilities,
+  checkOpenAiCompatibleCapabilities,
+  checkRouteCapabilities,
+  defaultFetch,
+  type FetchLike,
+  type StageCapabilityEvidence,
+} from "./preflight/capability.js";
+export {
+  emptyPreflightState,
+  loadPreflightState,
+  preflightStateFilePath,
+  savePreflightState,
+  type PreflightStateFile,
+  type StoredApproval,
+  type StoredLiveCheck,
+  type StoredProfilePreflight,
+} from "./preflight/state.js";
+export {
+  NORMAL_LIVE_CHECK_TTL_MS,
+  STRICT_LIVE_CHECK_TTL_MS,
+  admitRemoteRoutes,
+  profileFingerprint,
+  recordProfileApproval,
+  refreshProfilePreflight,
+  reviewedPricingFor,
+  type PreflightDeps,
+  type ProfilePreflightReport,
+  type StagePreflightOutcome,
+} from "./preflight/preflight.js";
+export {
+  APPROVAL_PHRASE,
+  obtainExplicitApproval,
+} from "./cli/approval.js";

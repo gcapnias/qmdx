@@ -46,8 +46,8 @@ let partiallyEmbedded: TestIndex;
 let overriddenProfile: TestIndex;
 let corrupted: TestIndex;
 
-function doctor(index: TestIndex, options?: Parameters<typeof runCli>[2]) {
-  return runCli(["doctor", "--format", "json"], index.root, options);
+async function doctor(index: TestIndex, options?: Parameters<typeof runCli>[2]) {
+  return await runCli(["doctor", "--format", "json"], index.root, options);
 }
 
 function expectErrorEnvelope(stderr: string): ErrorEnvelope {
@@ -86,8 +86,8 @@ afterAll(() => {
 });
 
 describe("doctor on a usable index", () => {
-  it("reports an ok diagnostics document at exit 0 with empty stderr", () => {
-    const run = doctor(healthy, { fakeEmbedDimension: 8 });
+  it("reports an ok diagnostics document at exit 0 with empty stderr", async () => {
+    const run = await doctor(healthy, { fakeEmbedDimension: 8 });
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
 
@@ -109,13 +109,15 @@ describe("doctor on a usable index", () => {
     expect(report.timingMs.total).toBeGreaterThanOrEqual(0);
   });
 
-  it("keeps staleness diagnostic in the report without gating usability", () => {
-    const report = JSON.parse(doctor(healthy, { fakeEmbedDimension: 8 }).stdout) as ReadinessDiagnostics;
+  it("keeps staleness diagnostic in the report without gating usability", async () => {
+    const report = JSON.parse(
+      (await doctor(healthy, { fakeEmbedDimension: 8 })).stdout,
+    ) as ReadinessDiagnostics;
     expect(report.index.daysStale).toBeGreaterThanOrEqual(0);
   });
 
-  it("prints a human usability summary with probe result", () => {
-    const run = runCli(["doctor"], healthy.root, { fakeEmbedDimension: 8 });
+  it("prints a human usability summary with probe result", async () => {
+    const run = await runCli(["doctor"], healthy.root, { fakeEmbedDimension: 8 });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("qmdx doctor");
     expect(run.stdout).toContain("Embedding profile:");
@@ -126,8 +128,8 @@ describe("doctor on a usable index", () => {
 });
 
 describe("doctor failure gates", () => {
-  it("fails with local_index_incomplete when there are no active documents", () => {
-    const run = doctor(empty);
+  it("fails with local_index_incomplete when there are no active documents", async () => {
+    const run = await doctor(empty);
     expect(run.status).toBe(3);
     expect(run.stdout).toBe("");
     const envelope = expectErrorEnvelope(run.stderr);
@@ -139,17 +141,17 @@ describe("doctor failure gates", () => {
     expect(envelope.error.message).toContain("no active documents");
   });
 
-  it("fails with local_index_incomplete when the vector index is absent", () => {
-    const run = doctor(vectorless);
+  it("fails with local_index_incomplete when the vector index is absent", async () => {
+    const run = await doctor(vectorless);
     expect(run.status).toBe(3);
     const envelope = expectErrorEnvelope(run.stderr);
     expect(envelope.error.code).toBe("local_index_incomplete");
     expect(envelope.error.message).toContain("no vector index");
   });
 
-  it("fails with local_index_unavailable when the store cannot open", () => {
+  it("fails with local_index_unavailable when the store cannot open", async () => {
     writeFileSync(corrupted.dbPath, "this is definitely not a sqlite database");
-    const run = doctor(corrupted);
+    const run = await doctor(corrupted);
     expect(run.status).toBe(3);
     const envelope = expectErrorEnvelope(run.stderr);
     expect(envelope.error).toMatchObject({
@@ -159,8 +161,8 @@ describe("doctor failure gates", () => {
     expect(envelope.error.message).toContain("Cannot open QMD index");
   });
 
-  it("fails when more than 10% of documents need embedding, naming count and percentage", () => {
-    const run = doctor(materiallyIncomplete);
+  it("fails when more than 10% of documents need embedding, naming count and percentage", async () => {
+    const run = await doctor(materiallyIncomplete);
     expect(run.status).toBe(3);
     const envelope = expectErrorEnvelope(run.stderr);
     expect(envelope.error.code).toBe("local_index_incomplete");
@@ -168,8 +170,8 @@ describe("doctor failure gates", () => {
     expect(envelope.error.message).toContain("20%");
   });
 
-  it("fails with vector_probe_failed when the probe cannot execute against stored vectors", () => {
-    const run = doctor(healthy, { fakeEmbedDimension: 4 });
+  it("fails with vector_probe_failed when the probe cannot execute against stored vectors", async () => {
+    const run = await doctor(healthy, { fakeEmbedDimension: 4 });
     expect(run.status).toBe(3);
     const envelope = expectErrorEnvelope(run.stderr);
     expect(envelope.error).toMatchObject({
@@ -180,8 +182,8 @@ describe("doctor failure gates", () => {
     expect(envelope.error.message).toContain("Vector readiness probe failed");
   });
 
-  it("writes human-readable failures to stderr without envelopes", () => {
-    const run = runCli(["doctor"], empty.root);
+  it("writes human-readable failures to stderr without envelopes", async () => {
+    const run = await runCli(["doctor"], empty.root);
     expect(run.status).toBe(3);
     expect(run.stderr.startsWith("qmdx:")).toBe(true);
     expect(() => JSON.parse(run.stderr)).toThrow();
@@ -189,8 +191,8 @@ describe("doctor failure gates", () => {
 });
 
 describe("doctor warnings", () => {
-  it("warns with count and percentage at exactly 10% incomplete coverage", () => {
-    const run = doctor(partiallyEmbedded, { fakeEmbedDimension: 8 });
+  it("warns with count and percentage at exactly 10% incomplete coverage", async () => {
+    const run = await doctor(partiallyEmbedded, { fakeEmbedDimension: 8 });
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
 
@@ -206,8 +208,8 @@ describe("doctor warnings", () => {
     expect(report.warnings[0]!.message).toContain("10%");
   });
 
-  it("warns that a profile override forfeits the multilingual guarantee and requires a rebuild", () => {
-    const run = doctor(overriddenProfile, { fakeEmbedDimension: 8 });
+  it("warns that a profile override forfeits the multilingual guarantee and requires a rebuild", async () => {
+    const run = await doctor(overriddenProfile, { fakeEmbedDimension: 8 });
     expect(run.status).toBe(0);
 
     const report = JSON.parse(run.stdout) as ReadinessDiagnostics;
@@ -221,8 +223,8 @@ describe("doctor warnings", () => {
     expect(overrideWarning!.message).toContain("qmd embed -f");
   });
 
-  it("surfaces coverage warnings on stderr in human mode", () => {
-    const run = runCli(["doctor"], partiallyEmbedded.root, {
+  it("surfaces coverage warnings on stderr in human mode", async () => {
+    const run = await runCli(["doctor"], partiallyEmbedded.root, {
       fakeEmbedDimension: 8,
     });
     expect(run.status).toBe(0);
@@ -232,8 +234,8 @@ describe("doctor warnings", () => {
 });
 
 describe("setup shares the doctor readiness gate", () => {
-  it("reports ok diagnostics for the setup command on a usable index", () => {
-    const run = runCli(["setup", "--format", "json"], healthy.root, {
+  it("reports ok diagnostics for the setup command on a usable index", async () => {
+    const run = await runCli(["setup", "--format", "json"], healthy.root, {
       fakeEmbedDimension: 8,
     });
     expect(run.status).toBe(0);
@@ -242,26 +244,26 @@ describe("setup shares the doctor readiness gate", () => {
     expect(report.status).toBe("ok");
   });
 
-  it("fails setup with exit 3 on an unusable index", () => {
-    const run = runCli(["setup", "--format", "json"], empty.root);
+  it("fails setup with exit 3 on an unusable index", async () => {
+    const run = await runCli(["setup", "--format", "json"], empty.root);
     expect(run.status).toBe(3);
     expect(JSON.parse(run.stderr).error.code).toBe("local_index_incomplete");
   });
 
-  it("accepts --profile, failing on unconfigured names as invalid_profile", () => {
-    const run = runCli(["setup", "--profile", "default", "--format", "json"], healthy.root);
+  it("accepts --profile, failing on unconfigured names as invalid_profile", async () => {
+    const run = await runCli(["setup", "--profile", "default", "--format", "json"], healthy.root);
     expect(run.status).toBe(2);
     expect(JSON.parse(run.stderr).error.code).toBe("invalid_profile");
 
-    const doctorRun = runCli(["doctor", "--all", "--format", "json"], healthy.root);
+    const doctorRun = await runCli(["doctor", "--all", "--format", "json"], healthy.root);
     expect(doctorRun.status).toBe(2);
     expect(JSON.parse(doctorRun.stderr).error.code).toBe("unsupported_option");
   });
 });
 
 describe("bin dispatch", () => {
-  it("rejects unknown commands with usage guidance", () => {
-    const run = runCli(["frobnicate"], healthy.root);
+  it("rejects unknown commands with usage guidance", async () => {
+    const run = await runCli(["frobnicate"], healthy.root);
     expect(run.status).toBe(2);
     expect(run.stderr).toContain('unknown command "frobnicate"');
     expect(run.stderr).toContain("Usage: qmdx <command>");
