@@ -69,21 +69,20 @@ function emitQueryFailure(
   return emitFailure(error, argv, startedAt, streams, warnings);
 }
 
+/**
+ * Required-remote mode succeeds only when BOTH remote stages returned valid
+ * provider results. A degraded stage failed; a disabled stage never produced
+ * a provider result, so it also fails the requirement.
+ */
 function firstFailingRemoteStage(
   envelope: ResultEnvelope,
 ): "expansion" | "reranking" | null {
   const { expansion, reranking } = envelope.pipeline;
   if (
-    expansion.status === "expanded" ||
-    expansion.status === "original_sufficient"
+    expansion.status !== "expanded" &&
+    expansion.status !== "original_sufficient"
   ) {
-    return null;
+    return "expansion";
   }
-  if (expansion.status === "degraded") return "expansion";
-  if (
-    reranking.status === "degraded"
-  ) {
-    return "reranking";
-  }
-  return null;
+  return reranking.status === "ok" ? null : "reranking";
 }

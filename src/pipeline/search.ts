@@ -2,9 +2,19 @@ import type { ExpandedQuery, HybridQueryResult, QMDStore } from "@tobilu/qmd";
 import type { Clock } from "../core/clock.js";
 import { systemClock } from "../core/clock.js";
 import {
+  DEFAULT_EXPANSION_STAGE_BUDGET_MS,
+  DEFAULT_RERANKING_STAGE_BUDGET_MS,
+} from "../core/budgets.js";
+import {
+  createSearchBudget,
+  ledgerStageRuntime,
+  type SearchBudgetLedger,
+} from "../core/search-budget.js";
+import {
   buildResultEnvelope,
   type EnvelopeWarning,
   type GeneratedQueryDocument,
+  type RemoteStageMetadata,
   type ResultEnvelope,
   type SearchResultItem,
 } from "../core/envelope.js";
@@ -81,16 +91,26 @@ interface StageTimingCollector {
 
 const UNCONFIGURED_ROUTE_CODE: ReasonCode = "provider_unavailable";
 
+/** Metadata for a stage that never transmitted (disabled/unconfigured). */
+const IDLE_STAGE_METADATA: RemoteStageMetadata = {
+  attempts: 0,
+  retries: 0,
+  costUsd: 0,
+};
+
 export async function runQuery(
   request: QueryRequest,
   deps: SearchDeps = {},
 ): Promise<QueryOutcome> {
   const clock = deps.clock ?? systemClock;
+  // The orchestrator owns the cumulative query cost ledger and the hard
+  // end-to-end deadline; stages admit every attempt through it.
+  const budget = createSearchBudget(clock);
   const warnings: EnvelopeWarning[] = [];
   const startedAt = clock.nowMs();
   const timing = { expansionMs: 0, retrievalMs: 0, rerankingMs: 0 };
 
-  const expansion = await expansionStage(request, warnings, timing, clock, deps);
+  const expansion = await expansionStage(request, warnings, timing, clock, deps, budget);
   const retrieval = await retrievalStage(
     request,
     expansion.generatedQueries,
@@ -100,7 +120,7 @@ export async function runQuery(
     clock,
     deps,
   );
-  const reranking = await rerankingStage(retrieval.pool, request, warnings, timing, clock, deps);
+  const reranking = await rerankingStage(retrieval.pool, request, warnings, timing, clock, deps, budget);
 
   const shaped = shapeResults(
     retrieval.pool,
@@ -123,6 +143,7 @@ export async function runQuery(
         status: expansion.status,
         reason: expansion.reason,
         generatedQueries: expansion.generatedQueries,
+        metadata: expansion.metadata,
       },
       retrieval: {
         status: "ok",
@@ -134,6 +155,7 @@ export async function runQuery(
         status: reranking.report.status,
         reason: reranking.report.reason,
         candidateCount: retrieval.pool.length,
+        metadata: reranking.metadata,
       },
     },
     results: shaped.results,
@@ -156,6 +178,7 @@ interface ExpansionStageReport {
   generatedQueries: GeneratedQueryDocument[];
   /** True when a configured remote expansion route drove this stage. */
   usedRemoteRoute: boolean;
+  metadata: RemoteStageMetadata;
 }
 
 async function expansionStage(
@@ -164,6 +187,7 @@ async function expansionStage(
   timing: StageTimingCollector,
   clock: Clock,
   deps: SearchDeps,
+  budget: SearchBudgetLedger,
 ): Promise<ExpansionStageReport> {
   const stageStart = clock.nowMs();
   try {
@@ -175,6 +199,7 @@ async function expansionStage(
         reason: null,
         generatedQueries: [],
         usedRemoteRoute: false,
+        metadata: IDLE_STAGE_METADATA,
       };
     }
     const route = deps.effectiveProfile?.expansion ?? null;
@@ -186,12 +211,32 @@ async function expansionStage(
         reason: UNCONFIGURED_ROUTE_CODE,
         generatedQueries: [],
         usedRemoteRoute: false,
+        metadata: IDLE_STAGE_METADATA,
       };
     }
+    if (budget.globalExpired()) {
+      // The hard end-to-end deadline passed before the stage could start:
+      // cancel it without any transmission.
+      warnings.push(globalDeadlineWarning("expansion"));
+      return {
+        status: "degraded",
+        reason: "global_deadline_exceeded",
+        generatedQueries: [],
+        usedRemoteRoute: false,
+        metadata: IDLE_STAGE_METADATA,
+      };
+    }
+    const runtime = ledgerStageRuntime(
+      clock,
+      budget,
+      DEFAULT_EXPANSION_STAGE_BUDGET_MS,
+      stageStart,
+    );
     const outcome = await runExpansionStage(
       { plainQuery: request.plainQuery },
       route,
       deps,
+      runtime,
     );
     if (outcome.warning !== null) warnings.push(outcome.warning);
     return {
@@ -199,6 +244,7 @@ async function expansionStage(
       reason: outcome.reason,
       generatedQueries: outcome.generatedQueries,
       usedRemoteRoute: true,
+      metadata: outcome.metadata,
     };
   } finally {
     timing.expansionMs = clock.nowMs() - stageStart;
@@ -301,12 +347,18 @@ async function rerankingStage(
   timing: StageTimingCollector,
   clock: Clock,
   deps: SearchDeps,
+  budget: SearchBudgetLedger,
 ): Promise<{
   report: { status: "ok" | "degraded" | "disabled"; reason: ReasonCode | null };
   remoteRerankScores: Map<HybridQueryResult, number> | null;
+  metadata: RemoteStageMetadata;
 }> {
   if (request.noRerank) {
-    return { report: { status: "disabled", reason: null }, remoteRerankScores: null };
+    return {
+      report: { status: "disabled", reason: null },
+      remoteRerankScores: null,
+      metadata: IDLE_STAGE_METADATA,
+    };
   }
   const stageStart = clock.nowMs();
   try {
@@ -317,8 +369,34 @@ async function rerankingStage(
       return {
         report: { status: "degraded", reason: UNCONFIGURED_ROUTE_CODE },
         remoteRerankScores: null,
+        metadata: IDLE_STAGE_METADATA,
       };
     }
+    if (pool.length === 0) {
+      // Nothing was retrieved; there is nothing to rerank regardless of the
+      // remaining budgets.
+      return {
+        report: { status: "ok", reason: null },
+        remoteRerankScores: null,
+        metadata: IDLE_STAGE_METADATA,
+      };
+    }
+    if (budget.globalExpired()) {
+      // The hard end-to-end deadline passed before the stage could start:
+      // cancel it without any transmission.
+      warnings.push(globalDeadlineWarning("reranking"));
+      return {
+        report: { status: "degraded", reason: "global_deadline_exceeded" },
+        remoteRerankScores: null,
+        metadata: IDLE_STAGE_METADATA,
+      };
+    }
+    const runtime = ledgerStageRuntime(
+      clock,
+      budget,
+      DEFAULT_RERANKING_STAGE_BUDGET_MS,
+      stageStart,
+    );
     const outcome = await runRerankingStage(
       {
         pool,
@@ -327,9 +405,10 @@ async function rerankingStage(
       },
       route,
       deps,
+      runtime,
     );
     if (outcome.warning !== null) warnings.push(outcome.warning);
-    return outcome;
+    return { ...outcome };
   } finally {
     timing.rerankingMs = clock.nowMs() - stageStart;
   }
@@ -343,6 +422,18 @@ function unconfiguredWarning(stage: "expansion" | "reranking"): EnvelopeWarning 
       stage === "expansion"
         ? "No remote expansion route is configured; kept original query routes."
         : "No remote reranking route is configured; kept QMD fused order.",
+    retryable: false,
+  };
+}
+
+function globalDeadlineWarning(stage: "expansion" | "reranking"): EnvelopeWarning {
+  return {
+    stage,
+    code: "global_deadline_exceeded",
+    message:
+      stage === "expansion"
+        ? "The hard end-to-end search deadline expired; the expansion stage was cancelled. Kept the original query routes."
+        : "The hard end-to-end search deadline expired; the reranking stage was cancelled. Kept QMD fused order.",
     retryable: false,
   };
 }

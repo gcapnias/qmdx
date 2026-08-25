@@ -11,8 +11,15 @@ import {
 import type { Clock } from "../core/clock.js";
 import { systemClock } from "../core/clock.js";
 import type { ReasonCode } from "../core/enums.js";
-import type { EnvelopeWarning } from "../core/envelope.js";
+import type {
+  EnvelopeWarning,
+  RemoteStageMetadata,
+} from "../core/envelope.js";
 import { QmdxError, internalError } from "../core/errors.js";
+import {
+  selfContainedStageRuntime,
+  type StageRuntime,
+} from "../core/search-budget.js";
 import {
   reviewedProviderPricing,
   type ProviderPricingSource,
@@ -54,6 +61,8 @@ export interface RerankingStageOutcome {
   remoteRerankScores: Map<HybridQueryResult, number> | null;
   /** Stable degradation warning to surface in the result envelope. */
   warning: EnvelopeWarning | null;
+  /** Mandatory attempts/retries/cost metadata for the result envelope. */
+  metadata: RemoteStageMetadata;
 }
 
 export interface RerankingDeps {
@@ -119,12 +128,24 @@ export async function runRerankingStage(
   input: RerankingStageInput,
   route: EffectiveRoute | null,
   deps: RerankingDeps = {},
+  runtime?: StageRuntime,
 ): Promise<RerankingStageOutcome> {
   const clock = deps.clock ?? systemClock;
   const transport = deps.transport ?? defaultRerankTransport;
   const pricing = deps.pricing ?? reviewedProviderPricing;
   const rng = deps.rng ?? Math.random;
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
+  // Without an orchestrator-provided runtime the stage is self-contained:
+  // fresh stage budget and query ceiling, no global deadline.
+  const rt = runtime ?? selfContainedStageRuntime(clock, DEFAULT_RERANKING_STAGE_BUDGET_MS);
+
+  let attempts = 0;
+  let chargedUsd = 0;
+  const metadata = (): RemoteStageMetadata => ({
+    attempts,
+    retries: Math.max(0, attempts - 1),
+    costUsd: Number(chargedUsd.toFixed(6)),
+  });
 
   const degraded = (
     reason: ReasonCode,
@@ -134,6 +155,7 @@ export async function runRerankingStage(
     report: { status: "degraded", reason },
     remoteRerankScores: null,
     warning: { stage: "reranking", code: reason, message, retryable },
+    metadata: metadata(),
   });
 
   try {
@@ -143,6 +165,7 @@ export async function runRerankingStage(
         report: { status: "degraded", reason: "provider_unavailable" },
         remoteRerankScores: null,
         warning: null,
+        metadata: metadata(),
       };
     }
     if (input.pool.length === 0) {
@@ -151,6 +174,7 @@ export async function runRerankingStage(
         report: { status: "ok", reason: null },
         remoteRerankScores: null,
         warning: null,
+        metadata: metadata(),
       };
     }
 
@@ -170,32 +194,46 @@ export async function runRerankingStage(
     const credential = resolveCredential(route, deps.env ?? process.env);
     const rate = pricing.rateFor(route.provider, route.model);
 
-    const stageStartedAtMs = clock.nowMs();
-    const remainingBudgetMs = () =>
-      DEFAULT_RERANKING_STAGE_BUDGET_MS - (clock.nowMs() - stageStartedAtMs);
-    let spentUsd = 0;
     let lastFailure: ClassifiedAttemptError | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_STAGE; attempt++) {
-      // Cost admission before every attempt: no attempt may be sent unless
-      // its worst-case billable cost fits the remaining query ceiling.
-      const attemptCostUsd = estimateWorstCaseAttemptCostUsd(admitted, rate);
-      if (spentUsd + attemptCostUsd > DEFAULT_QUERY_COST_CEILING_USD) {
-      return degraded(
-        "cost_budget_exceeded",
-        `Estimated worst-case reranking cost would exceed the US$${DEFAULT_QUERY_COST_CEILING_USD.toFixed(2)} query ceiling. Kept QMD fused order.`,
-        false,
-      );
+      // Cancellation first: once the hard end-to-end deadline has passed the
+      // stage is cancelled, never completed with a late transmission.
+      if (rt.globalExpired()) {
+        return degraded(
+          "global_deadline_exceeded",
+          "The hard end-to-end search deadline expired; the reranking stage was cancelled. Kept QMD fused order.",
+          false,
+        );
       }
-      if (remainingBudgetMs() <= 0) {
+      if (rt.remainingStageMs() <= 0) {
         return degraded(
           "stage_budget_exceeded",
           "The cumulative reranking budget was exhausted before transmission. Kept QMD fused order.",
           false,
         );
       }
+      // Cost admission before every attempt: no attempt may be sent unless
+      // its worst-case billable cost fits the remaining query ceiling. The
+      // estimate is reserved against the orchestrator's cumulative ledger.
+      const attemptCostUsd = estimateWorstCaseAttemptCostUsd(admitted, rate);
+      if (!rt.reserveAttemptCost(attemptCostUsd)) {
+        return degraded(
+          "cost_budget_exceeded",
+          `Estimated worst-case reranking cost would exceed the US$${DEFAULT_QUERY_COST_CEILING_USD.toFixed(2)} query cost budget. Kept QMD fused order.`,
+          false,
+        );
+      }
+      chargedUsd += attemptCostUsd;
+      attempts += 1;
 
-      const timeoutMs = Math.min(remainingBudgetMs(), RERANK_ATTEMPT_TIMEOUT_CAP_MS);
+      // Remaining-time admission: an attempt never starts when its duration
+      // cannot fit the remaining stage budget or the global deadline.
+      const timeoutMs = Math.min(
+        rt.remainingStageMs(),
+        rt.remainingGlobalMs(),
+        RERANK_ATTEMPT_TIMEOUT_CAP_MS,
+      );
       try {
         const scores = await executeCohereAttempt(
           route,
@@ -204,7 +242,6 @@ export async function runRerankingStage(
           transport,
           timeoutMs,
         );
-        spentUsd += attemptCostUsd;
         const remoteRerankScores = new Map<HybridQueryResult, number>();
         for (const doc of admitted.documents) {
           const entry = input.pool[doc.poolIndex]!;
@@ -214,22 +251,22 @@ export async function runRerankingStage(
           report: { status: "ok", reason: null },
           remoteRerankScores,
           warning: null,
+          metadata: metadata(),
         };
       } catch (error) {
         if (!(error instanceof ClassifiedAttemptError)) {
           throw internalError("The reranking adapter failed unexpectedly.", error);
         }
         lastFailure = error;
-        spentUsd += attemptCostUsd;
         if (!error.classification.retryable || attempt === MAX_ATTEMPTS_PER_STAGE) {
           break;
         }
-        // Full-jitter backoff bounded by the remaining stage budget; honor
-        // Retry-After only when it fits.
-        const remainingBeforeBackoff = remainingBudgetMs();
+        // Full-jitter backoff bounded by the remaining stage budget AND the
+        // global deadline; honor Retry-After only when it fits both.
+        const allowanceMs = Math.min(rt.remainingStageMs(), rt.remainingGlobalMs());
         const waitMs = error.classification.retryAfterMs ??
           Math.floor(rng() * RETRY_BACKOFF_BASE_MS);
-        if (waitMs > 0 && waitMs < remainingBeforeBackoff) {
+        if (waitMs > 0 && waitMs < allowanceMs) {
           await sleep(waitMs);
         }
       }

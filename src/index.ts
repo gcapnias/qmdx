@@ -25,6 +25,13 @@ export {
   RERANK_ATTEMPT_TIMEOUT_CAP_MS,
 } from "./core/budgets.js";
 export {
+  createSearchBudget,
+  ledgerStageRuntime,
+  selfContainedStageRuntime,
+  type SearchBudgetLedger,
+  type StageRuntime,
+} from "./core/search-budget.js";
+export {
   MAX_EXPANSION_INPUT_CHARS,
   ExpansionInputError,
   admitExpansionInput,

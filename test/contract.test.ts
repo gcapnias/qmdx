@@ -116,13 +116,19 @@ describe("closed enums", () => {
 });
 
 describe("result envelope shape", () => {
+  const IDLE_METADATA = { attempts: 0, retries: 0, costUsd: 0 };
   const envelope = buildResultEnvelope({
     query: { original: "q", intent: null, collections: [] },
     pipeline: {
       status: "ok",
-      expansion: { status: "expanded", reason: null, generatedQueries: [] },
+      expansion: {
+        status: "expanded",
+        reason: null,
+        generatedQueries: [],
+        metadata: IDLE_METADATA,
+      },
       retrieval: { status: "ok", reason: null, candidateCount: 0, engine: "qmd" },
-      reranking: { status: "ok", reason: null, candidateCount: 0 },
+      reranking: { status: "ok", reason: null, candidateCount: 0, metadata: IDLE_METADATA },
     },
     results: [],
     warnings: [],
@@ -147,8 +153,11 @@ describe("result envelope shape", () => {
       "retrieval",
       "status",
     ]);
+    // `metadata` is an optional v1 addition (versioning rule): mandatory
+    // retries/cost/usage degradation metadata without breaking v1 consumers.
     expect(Object.keys(envelope.pipeline.expansion).sort()).toEqual([
       "generatedQueries",
+      "metadata",
       "reason",
       "status",
     ]);
@@ -160,10 +169,13 @@ describe("result envelope shape", () => {
     ]);
     expect(Object.keys(envelope.pipeline.reranking).sort()).toEqual([
       "candidateCount",
+      "metadata",
       "reason",
       "status",
     ]);
     expect(envelope.pipeline.retrieval.engine).toBe("qmd");
+    expect(envelope.pipeline.expansion.metadata).toEqual(IDLE_METADATA);
+    expect(envelope.pipeline.reranking.metadata).toEqual(IDLE_METADATA);
   });
 
   it("has exactly the spec timing members", () => {

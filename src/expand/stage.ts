@@ -1,5 +1,7 @@
 import type { EffectiveRoute } from "../config/resolve.js";
 import { resolveCredential } from "../config/resolve.js";
+import type { Clock } from "../core/clock.js";
+import { systemClock } from "../core/clock.js";
 import {
   DEFAULT_EXPANSION_STAGE_BUDGET_MS,
   DEFAULT_QUERY_COST_CEILING_USD,
@@ -7,14 +9,17 @@ import {
   MAX_ATTEMPTS_PER_STAGE,
   RETRY_BACKOFF_BASE_MS,
 } from "../core/budgets.js";
-import type { Clock } from "../core/clock.js";
-import { systemClock } from "../core/clock.js";
 import type {
   EnvelopeWarning,
   GeneratedQueryDocument,
+  RemoteStageMetadata,
 } from "../core/envelope.js";
 import type { ReasonCode } from "../core/enums.js";
 import { QmdxError, internalError } from "../core/errors.js";
+import {
+  selfContainedStageRuntime,
+  type StageRuntime,
+} from "../core/search-budget.js";
 import {
   reviewedProviderPricing,
   type ProviderPricingSource,
@@ -33,6 +38,7 @@ import {
   defaultExpandTransport,
   executeExpansionAttempt,
   type ExpandTransport,
+  type ExpansionUsage,
 } from "./openai.js";
 import { validateGeneratedQueries } from "./validate.js";
 
@@ -54,6 +60,8 @@ export interface ExpansionStageOutcome {
   generatedQueries: GeneratedQueryDocument[];
   /** Stable degradation warning to surface in the result envelope. */
   warning: EnvelopeWarning | null;
+  /** Mandatory attempts/retries/cost metadata for the result envelope. */
+  metadata: RemoteStageMetadata;
 }
 
 export interface ExpansionDeps {
@@ -83,12 +91,26 @@ export async function runExpansionStage(
   input: ExpansionStageInput,
   route: EffectiveRoute | null,
   deps: ExpansionDeps = {},
+  runtime?: StageRuntime,
 ): Promise<ExpansionStageOutcome> {
   const clock = deps.clock ?? systemClock;
   const transport = deps.transport ?? defaultExpandTransport;
   const pricing = deps.pricing ?? reviewedProviderPricing;
   const rng = deps.rng ?? Math.random;
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
+  // Without an orchestrator-provided runtime the stage is self-contained:
+  // fresh stage budget and query ceiling, no global deadline.
+  const rt = runtime ?? selfContainedStageRuntime(clock, DEFAULT_EXPANSION_STAGE_BUDGET_MS);
+
+  let attempts = 0;
+  let chargedUsd = 0;
+  let usage: ExpansionUsage | undefined;
+  const metadata = (): RemoteStageMetadata => ({
+    attempts,
+    retries: Math.max(0, attempts - 1),
+    costUsd: Number(chargedUsd.toFixed(6)),
+    ...(usage === undefined ? {} : { usage }),
+  });
 
   const degraded = (
     reason: ReasonCode,
@@ -99,6 +121,7 @@ export async function runExpansionStage(
     reason,
     generatedQueries: [],
     warning: { stage: "expansion", code: reason, message, retryable },
+    metadata: metadata(),
   });
 
   try {
@@ -109,6 +132,7 @@ export async function runExpansionStage(
         reason: "provider_unavailable",
         generatedQueries: [],
         warning: null,
+        metadata: metadata(),
       };
     }
 
@@ -127,32 +151,46 @@ export async function runExpansionStage(
     const rate = pricing.rateFor(route.provider, route.model);
     const shape = estimateExpansionAttemptShape(EXPANSION_SYSTEM_PROMPT, admittedQuery);
 
-    const stageStartedAtMs = clock.nowMs();
-    const remainingBudgetMs = () =>
-      DEFAULT_EXPANSION_STAGE_BUDGET_MS - (clock.nowMs() - stageStartedAtMs);
-    let spentUsd = 0;
     let lastFailure: ClassifiedAttemptError | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_STAGE; attempt++) {
-      // Cost admission before every attempt: no attempt may be sent unless
-      // its worst-case billable cost fits the remaining query ceiling.
-      const attemptCostUsd = estimateWorstCaseAttemptCostUsd(shape, rate);
-      if (spentUsd + attemptCostUsd > DEFAULT_QUERY_COST_CEILING_USD) {
+      // Cancellation first: once the hard end-to-end deadline has passed the
+      // stage is cancelled, never completed with a late transmission.
+      if (rt.globalExpired()) {
         return degraded(
-          "cost_budget_exceeded",
-          `Estimated worst-case expansion cost would exceed the US$${DEFAULT_QUERY_COST_CEILING_USD.toFixed(2)} query ceiling. Kept the original lexical and vector routes.`,
+          "global_deadline_exceeded",
+          "The hard end-to-end search deadline expired; the expansion stage was cancelled. Kept the original lexical and vector routes.",
           false,
         );
       }
-      if (remainingBudgetMs() <= 0) {
+      if (rt.remainingStageMs() <= 0) {
         return degraded(
           "stage_budget_exceeded",
           "The cumulative expansion budget was exhausted before transmission. Kept the original lexical and vector routes.",
           false,
         );
       }
+      // Cost admission before every attempt: no attempt may be sent unless
+      // its worst-case billable cost fits the remaining query ceiling. The
+      // estimate is reserved against the orchestrator's cumulative ledger.
+      const attemptCostUsd = estimateWorstCaseAttemptCostUsd(shape, rate);
+      if (!rt.reserveAttemptCost(attemptCostUsd)) {
+        return degraded(
+          "cost_budget_exceeded",
+          `Estimated worst-case expansion cost would exceed the US$${DEFAULT_QUERY_COST_CEILING_USD.toFixed(2)} query cost budget. Kept the original lexical and vector routes.`,
+          false,
+        );
+      }
+      chargedUsd += attemptCostUsd;
+      attempts += 1;
 
-      const timeoutMs = Math.min(remainingBudgetMs(), EXPANSION_ATTEMPT_TIMEOUT_CAP_MS);
+      // Remaining-time admission: an attempt never starts when its duration
+      // cannot fit the remaining stage budget or the global deadline.
+      const timeoutMs = Math.min(
+        rt.remainingStageMs(),
+        rt.remainingGlobalMs(),
+        EXPANSION_ATTEMPT_TIMEOUT_CAP_MS,
+      );
       let parsed;
       try {
         parsed = await executeExpansionAttempt(
@@ -167,20 +205,21 @@ export async function runExpansionStage(
           throw internalError("The expansion adapter failed unexpectedly.", error);
         }
         lastFailure = error;
-        spentUsd += attemptCostUsd;
         if (!error.classification.retryable || attempt === MAX_ATTEMPTS_PER_STAGE) {
           break;
         }
-        // Full-jitter backoff bounded by the remaining stage budget; honor
-        // Retry-After only when it fits.
-        const remainingBeforeBackoff = remainingBudgetMs();
+        // Full-jitter backoff bounded by the remaining stage budget AND the
+        // global deadline; honor Retry-After only when it fits both.
+        const allowanceMs = Math.min(rt.remainingStageMs(), rt.remainingGlobalMs());
         const waitMs = error.classification.retryAfterMs ??
           Math.floor(rng() * RETRY_BACKOFF_BASE_MS);
-        if (waitMs > 0 && waitMs < remainingBeforeBackoff) {
+        if (waitMs > 0 && waitMs < allowanceMs) {
           await sleep(waitMs);
         }
         continue;
       }
+
+      if (parsed.usage !== undefined) usage = parsed.usage;
 
       if (parsed.outcome === "original_sufficient") {
         return {
@@ -188,6 +227,7 @@ export async function runExpansionStage(
           reason: null,
           generatedQueries: [],
           warning: null,
+          metadata: metadata(),
         };
       }
 
@@ -203,6 +243,7 @@ export async function runExpansionStage(
           reason: null,
           generatedQueries: queries,
           warning: null,
+          metadata: metadata(),
         };
       }
       // No entry survived: the whole provider response was unusable.
@@ -215,11 +256,10 @@ export async function runExpansionStage(
             ? `all ${discardedCount} generated queries violated the validation rules`
             : "the provider returned no generated queries for an expanded outcome",
       });
-      spentUsd += attemptCostUsd;
       if (attempt === MAX_ATTEMPTS_PER_STAGE) break;
-      const remainingBeforeBackoff = remainingBudgetMs();
+      const allowanceMs = Math.min(rt.remainingStageMs(), rt.remainingGlobalMs());
       const waitMs = Math.floor(rng() * RETRY_BACKOFF_BASE_MS);
-      if (waitMs > 0 && waitMs < remainingBeforeBackoff) {
+      if (waitMs > 0 && waitMs < allowanceMs) {
         await sleep(waitMs);
       }
     }
