@@ -1,0 +1,11 @@
+{
+  "sdk": "@tobilu/qmd",
+  "pinnedVersion": "2.8.3",
+  "dependencyRule": "exact-direct",
+  "upgradePolicy": {
+    "minQmdxReleaseOnUpgrade": "minor",
+    "releaseTypeOnBreakingChange": "major",
+    "requiresRepresentativeIndexCompatibilityTests": true,
+    "policyDocument": "docs/policy/sdk-upgrade-policy.md"
+  }
+}
