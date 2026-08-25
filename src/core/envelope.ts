@@ -8,7 +8,6 @@ import type {
   GeneratedQueryType,
   PipelineStatus,
   ReasonCode,
-  RetrievalStatus,
   RerankingStatus,
   WarningStage,
 } from "./enums.js";
@@ -65,8 +64,8 @@ export interface ExpansionStageReport {
 }
 
 export interface RetrievalStageReport {
-  status: RetrievalStatus;
-  reason: ReasonCode | null;
+  status: "ok";
+  reason: null;
   candidateCount: number;
   engine: "qmd";
 }

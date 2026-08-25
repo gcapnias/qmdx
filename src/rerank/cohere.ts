@@ -1,7 +1,13 @@
 import { request as httpRequest, type IncomingHttpHeaders, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { EffectiveRoute } from "../config/resolve.js";
-import type { ReasonCode } from "../core/enums.js";
+import {
+  ClassifiedAttemptError,
+  type FailureClassification,
+} from "../core/remote-stage.js";
+
+export type { FailureClassification };
+export { ClassifiedAttemptError };
 import type { AdmittedRerankRequest } from "./admission.js";
 
 /**
@@ -216,14 +222,6 @@ export function validateCohereResponse(
   return scores;
 }
 
-export interface FailureClassification {
-  reason: ReasonCode;
-  retryable: boolean;
-  /** Provider-suggested wait in milliseconds, when a Retry-After header exists. */
-  retryAfterMs: number | null;
-  detail: string;
-}
-
 /**
  * Classifies one failed attempt. Transient failures (transport error,
  * timeout, HTTP 408/429/5xx, invalid/incomplete response) are retryable at
@@ -352,17 +350,8 @@ export async function executeCohereAttempt(
   }
 }
 
-export class ClassifiedAttemptError extends Error {
-  readonly classification: FailureClassification;
-  constructor(classification: FailureClassification) {
-    super(`Reranking attempt failed: ${classification.detail}`);
-    this.name = "ClassifiedAttemptError";
-    this.classification = classification;
-  }
-}
-
 function classifiedError(classification: FailureClassification): ClassifiedAttemptError {
-  return new ClassifiedAttemptError(classification);
+  return new ClassifiedAttemptError(classification, "Reranking");
 }
 
 function parseRetryAfterMs(value: string | undefined): number | null {

@@ -6,7 +6,6 @@ import {
   GENERATED_QUERY_TYPES,
   PIPELINE_STATUSES,
   RERANKING_STATUSES,
-  RETRIEVAL_STATUSES,
   REASON_CODES,
   SCHEMA_VERSION,
   WARNING_STAGES,
@@ -52,10 +51,6 @@ describe("closed enums", () => {
       "degraded",
       "disabled",
     ]);
-  });
-
-  it("retrieval status is only ok", () => {
-    expect([...RETRIEVAL_STATUSES]).toEqual(["ok"]);
   });
 
   it("reranking statuses match the spec", () => {
