@@ -20,6 +20,13 @@ export const HARD_END_TO_END_DEADLINE_MS = 30_000;
 export const MAX_ATTEMPTS_PER_STAGE = 2;
 
 /**
+ * Upper bound on one attempt's wall-clock wait for the expansion HTTP
+ * response. An attempt may never outlive the remaining stage budget; this
+ * cap only bounds a single attempt inside a fresh budget.
+ */
+export const EXPANSION_ATTEMPT_TIMEOUT_CAP_MS = 7_500;
+
+/**
  * Upper bound on one attempt's wall-clock wait for the reranking HTTP
  * response. An attempt may never outlive the remaining stage budget; this
  * cap only bounds a single attempt inside a fresh budget.

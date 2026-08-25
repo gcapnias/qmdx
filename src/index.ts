@@ -13,7 +13,56 @@ export {
   blendedFinalScore,
   retrievalWeightForRank,
 } from "./pipeline/score.js";
-export { runQuery, type QueryRequest } from "./pipeline/search.js";
+export { runQuery, submissionRoutes, type QueryRequest } from "./pipeline/search.js";
+export {
+  DEFAULT_EXPANSION_STAGE_BUDGET_MS,
+  DEFAULT_QUERY_COST_CEILING_USD,
+  DEFAULT_RERANKING_STAGE_BUDGET_MS,
+  EXPANSION_ATTEMPT_TIMEOUT_CAP_MS,
+  HARD_END_TO_END_DEADLINE_MS,
+  MAX_ATTEMPTS_PER_STAGE,
+  RETRY_BACKOFF_BASE_MS,
+  RERANK_ATTEMPT_TIMEOUT_CAP_MS,
+} from "./core/budgets.js";
+export {
+  MAX_EXPANSION_INPUT_CHARS,
+  ExpansionInputError,
+  admitExpansionInput,
+  conservativeTokenUpperBound,
+  estimateExpansionAttemptShape,
+  estimateWorstCaseAttemptCostUsd,
+} from "./expand/admission.js";
+export {
+  EXPANSION_RESPONSE_JSON_SCHEMA,
+  EXPANSION_SAMPLING,
+  EXPANSION_SCHEMA_NAME,
+  EXPANSION_SYSTEM_PROMPT,
+} from "./expand/schema.js";
+export {
+  MAX_COUNT_BY_TYPE,
+  MAX_LENGTH_BY_TYPE,
+  validateEntry,
+  validateGeneratedQueries,
+} from "./expand/validate.js";
+export {
+  ATTEMPT_TIMEOUT_ERROR_NAME as EXPANSION_ATTEMPT_TIMEOUT_ERROR_NAME,
+  buildExpansionRequest,
+  classifyFailure as classifyExpansionFailure,
+  defaultExpandTransport,
+  executeExpansionAttempt,
+  validateExpansionResponse,
+  ClassifiedAttemptError as ExpansionClassifiedAttemptError,
+  InvalidProviderResponseError as ExpansionInvalidProviderResponseError,
+  type ExpandHttpRequest,
+  type ExpandHttpResponse,
+  type ExpandTransport,
+} from "./expand/openai.js";
+export {
+  runExpansionStage,
+  type ExpansionDeps,
+  type ExpansionStageInput,
+  type ExpansionStageOutcome,
+} from "./expand/stage.js";
 export { parseQueryArgs } from "./cli/args.js";
 export { runQueryCommand } from "./cli/query-command.js";
 export {
@@ -95,9 +144,9 @@ export {
   MAX_RERANK_DOCUMENTS,
   VALIDATED_MAX_TOKENS_PER_DOC,
   VALIDATED_MAX_TOTAL_INPUT_TOKENS,
-  conservativeTokenUpperBound,
+  conservativeTokenUpperBound as conservativeRerankTokenUpperBound,
   admitRerankRequest,
-  estimateWorstCaseAttemptCostUsd,
+  estimateWorstCaseAttemptCostUsd as estimateRerankWorstCaseAttemptCostUsd,
   PayloadLimitExceededError,
   type AdmittedRerankRequest,
 } from "./rerank/admission.js";
