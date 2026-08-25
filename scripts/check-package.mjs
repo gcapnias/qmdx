@@ -70,7 +70,21 @@ check(
   `package-lock.json must resolve ${policy.sdk} to exactly ${sdkPin}`,
 );
 
-for (const entry of ["better-sqlite3@13.0.3", "esbuild@0.28.2", "node-llama-cpp@3.20.0"]) {
+const betterSqlitePin = "12.11.1";
+check(
+  pkg.overrides?.["better-sqlite3"] === betterSqlitePin,
+  `better-sqlite3 must be overridden to exactly ${betterSqlitePin}`,
+);
+const betterSqliteResolutions = Object.entries(lockfile.packages ?? {}).filter(
+  ([path]) => path === "node_modules/better-sqlite3" || path.endsWith("/node_modules/better-sqlite3"),
+);
+check(
+  betterSqliteResolutions.length > 0 &&
+    betterSqliteResolutions.every(([, entry]) => entry.version === betterSqlitePin),
+  `package-lock.json must resolve every better-sqlite3 instance to exactly ${betterSqlitePin}`,
+);
+
+for (const entry of [`better-sqlite3@${betterSqlitePin}`, "esbuild@0.28.2", "node-llama-cpp@3.20.0"]) {
   check(
     pkg.allowScripts?.[entry] === true,
     `allowScripts must keep "${entry}": true so npm ci can prepare native dependencies`,
