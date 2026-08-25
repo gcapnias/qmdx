@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,7 +53,7 @@ const CONFIG = {
       privacy: { declaration: DECLARATION },
     },
   },
-} as const;
+};
 
 /**
  * Seeds the local preflight state (approval + current live checks) for the
@@ -60,10 +61,11 @@ const CONFIG = {
  * own concerns offline instead of contacting real provider catalogs.
  */
 function seedDefaultProfilePreflight(configDirPath: string): void {
+  const expansionEndpoint = expansionStubUrl;
   const fingerprint = computeProfilePreflightFingerprint({
     expansion: {
       provider: "openai",
-      endpoint: "https://api.openai.com/v1",
+      endpoint: expansionEndpoint,
       model: "gpt-4o-mini",
       credentialEnv: "QMDX_TEST_EXPANSION_KEY",
     },
@@ -96,7 +98,7 @@ function seedDefaultProfilePreflight(configDirPath: string): void {
             expansion: {
               fingerprint,
               checkedAtMs: now,
-              evidence: evidence("expansion", "https://api.openai.com/v1/models"),
+              evidence: evidence("expansion", `${expansionEndpoint}/models`),
             },
             reranking: {
               fingerprint,
@@ -128,6 +130,50 @@ let index: TestIndex;
 let configDir: string;
 let literalConfigDir: string;
 let configPath: string;
+/**
+ * The pipeline now really runs remote expansion for profile-backed queries
+ * (ticket #10), so the fixture expansion endpoint points at a local stub
+ * that answers with a deterministic original_sufficient response instead of
+ * contacting the real provider.
+ */
+let expansionStubUrl: string;
+let closeExpansionStub: () => Promise<void>;
+
+function startExpansionStub(): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "stub",
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  outcome: "original_sufficient",
+                  queries: [],
+                }),
+              },
+            },
+          ],
+        }),
+      );
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      resolve({
+        url: `http://127.0.0.1:${port}/v1`,
+        close: () => new Promise((resolveClose) => server.close(() => resolveClose())),
+      });
+    });
+  });
+}
 
 function withConfigEnv(
   extra: NodeJS.ProcessEnv = {},
@@ -149,6 +195,10 @@ function withLiteralConfigEnv(): NodeJS.ProcessEnv {
 }
 
 beforeAll(async () => {
+  const stub = await startExpansionStub();
+  expansionStubUrl = stub.url;
+  closeExpansionStub = stub.close;
+  CONFIG.profiles.default.expansion.endpoint = expansionStubUrl;
   index = await createEmbeddedTestIndex(DOCS);
   configDir = mkdtempSync(join(tmpdir(), "qmdx-profiles-cli-"));
   configPath = join(configDir, "config.json");
@@ -162,7 +212,8 @@ beforeAll(async () => {
   seedDefaultProfilePreflight(configDir);
 }, 240000);
 
-afterAll(() => {
+afterAll(async () => {
+  await closeExpansionStub();
   void index;
   void configDir;
   void literalConfigDir;
@@ -173,7 +224,7 @@ describe("profile configuration through the CLI", () => {
     const run = await runCli(
       ["query", "embeddings", "--format", "json"],
       index.root,
-      { env: withConfigEnv() },
+      { env: withConfigEnv(), fakeEmbedDimension: 8 },
     );
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
@@ -186,7 +237,7 @@ describe("profile configuration through the CLI", () => {
     const run = await runCli(
       ["query", "embeddings", "--format", "json", "--profile", "default"],
       index.root,
-      { env: withConfigEnv() },
+      { env: withConfigEnv(), fakeEmbedDimension: 8 },
     );
     expect(run.status).toBe(0);
     const envelope = JSON.parse(run.stdout) as ResultEnvelope;
@@ -245,7 +296,7 @@ describe("profile configuration through the CLI", () => {
     const ok = await runCli(
       ["query", "embeddings", "--format", "json", "--explain", "--full"],
       index.root,
-      { env: withConfigEnv() },
+      { env: withConfigEnv(), fakeEmbedDimension: 8 },
     );
     expect(ok.status).toBe(0);
     expect(ok.stdout).not.toContain(SECRET);
