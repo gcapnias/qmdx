@@ -42,12 +42,19 @@ export interface StageUsage {
  * transmitted, retries performed, and the conservative worst-case billable
  * cost reserved for the stage in USD (docs/spec/qmdx-v1.md "Degradation":
  * retries + cost metadata are mandatory).
+ *
+ * `cache` is present only when a persistent stage cache was consulted:
+ * `"miss"` means a provider request followed; `"hit"` means the valid
+ * result came from an eligible cache entry (attempts 0, cost 0). Absent
+ * means no cache was configured — acceptance measurements are uncached,
+ * so the benchmark harness filters runs where `cache === "hit"`.
  */
 export interface RemoteStageMetadata {
   attempts: number;
   retries: number;
   costUsd: number;
   usage?: StageUsage;
+  cache?: "hit" | "miss";
 }
 
 export interface ExpansionStageReport {

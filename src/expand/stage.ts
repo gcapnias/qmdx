@@ -24,6 +24,9 @@ import {
   reviewedProviderPricing,
   type ProviderPricingSource,
 } from "../core/pricing.js";
+import type { StageCacheBinding } from "../core/cache.js";
+import { expansionCacheIdentity } from "./cache.js";
+import { captureWrapTransport, type PayloadSink } from "../core/capture.js";
 import {
   ExpansionInputError,
   admitExpansionInput,
@@ -72,6 +75,17 @@ export interface ExpansionDeps {
   /** Test seam for deterministic full-jitter backoff. */
   rng?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Opt-in persistent expansion response cache. When present, a valid
+   * cached result for the exact stage identity is returned without any
+   * transmission, cost reservation, or credential requirement.
+   */
+  expansionCache?: StageCacheBinding;
+  /**
+   * Explicit warned sensitive-payload-capture sink. When present, every
+   * transmitted attempt's request and response (or failure) is recorded.
+   */
+  capture?: PayloadSink;
 }
 
 const DEFAULT_SLEEP = (ms: number) =>
@@ -94,7 +108,14 @@ export async function runExpansionStage(
   runtime?: StageRuntime,
 ): Promise<ExpansionStageOutcome> {
   const clock = deps.clock ?? systemClock;
-  const transport = deps.transport ?? defaultExpandTransport;
+  const rawTransport = deps.transport ?? defaultExpandTransport;
+  const transport = deps.capture
+    ? (captureWrapTransport(
+        rawTransport,
+        deps.capture,
+        "expansion",
+      ) as unknown as ExpandTransport)
+    : rawTransport;
   const pricing = deps.pricing ?? reviewedProviderPricing;
   const rng = deps.rng ?? Math.random;
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
@@ -105,11 +126,15 @@ export async function runExpansionStage(
   let attempts = 0;
   let chargedUsd = 0;
   let usage: ExpansionUsage | undefined;
+  const cache = deps.expansionCache ?? null;
+  // Cache state is surfaced in the envelope metadata only when a cache was
+  // actually consulted; absent means uncached (acceptance runs).
   const metadata = (): RemoteStageMetadata => ({
     attempts,
     retries: Math.max(0, attempts - 1),
     costUsd: Number(chargedUsd.toFixed(6)),
     ...(usage === undefined ? {} : { usage }),
+    ...(cache === null ? {} : { cache: "miss" as const }),
   });
 
   const degraded = (
@@ -145,6 +170,24 @@ export async function runExpansionStage(
         return degraded(error.reason, `${error.message} Kept the original lexical and vector routes.`, false);
       }
       throw error;
+    }
+
+    // Opt-in cache lookup: a valid cached result for this exact identity is
+    // returned with zero attempts and zero cost — no credential resolution,
+    // no cost reservation, no transmission (required-remote accepts it).
+    if (cache !== null) {
+      const cached = readCachedExpansion(
+        cache.store.get(expansionCacheIdentity(route, cache, admittedQuery)),
+      );
+      if (cached !== null) {
+        return {
+          status: cached.outcome,
+          reason: null,
+          generatedQueries: cached.queries,
+          warning: null,
+          metadata: { attempts: 0, retries: 0, costUsd: 0, cache: "hit" },
+        };
+      }
     }
 
     const credential = resolveCredential(route, deps.env ?? process.env);
@@ -222,6 +265,12 @@ export async function runExpansionStage(
       if (parsed.usage !== undefined) usage = parsed.usage;
 
       if (parsed.outcome === "original_sufficient") {
+        if (cache !== null) {
+          cache.store.put(
+            expansionCacheIdentity(route, cache, admittedQuery),
+            { outcome: "original_sufficient", queries: [] },
+          );
+        }
         return {
           status: "original_sufficient",
           reason: null,
@@ -238,6 +287,14 @@ export async function runExpansionStage(
         admittedQuery,
       );
       if (queries.length > 0) {
+        // Only the fully validated result is cached; the stored value is the
+        // generated-query set — never a credential and never corpus content.
+        if (cache !== null) {
+          cache.store.put(
+            expansionCacheIdentity(route, cache, admittedQuery),
+            { outcome: "expanded", queries },
+          );
+        }
         return {
           status: "expanded",
           reason: null,
@@ -278,4 +335,57 @@ export async function runExpansionStage(
       false,
     );
   }
+}
+
+const GENERATION_TYPES: ReadonlySet<string> = new Set(["lex", "vec", "hyde"]);
+const GENERATION_LANGUAGES: ReadonlySet<string> = new Set(["en", "el", "und"]);
+const GENERATION_PURPOSES: ReadonlySet<string> = new Set([
+  "terminology",
+  "translation",
+  "semantic",
+  "hypothetical",
+]);
+
+/**
+ * Re-validates a cached expansion response before use. Anything malformed,
+ * stale-shaped, or from a previous schema is treated as a cache miss rather
+ * than trusted.
+ */
+export function readCachedExpansion(
+  value: unknown,
+): { outcome: "expanded" | "original_sufficient"; queries: GeneratedQueryDocument[] } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const outcome = record.outcome;
+  if (outcome !== "expanded" && outcome !== "original_sufficient") {
+    return null;
+  }
+  const queries = record.queries;
+  if (!Array.isArray(queries)) return null;
+  const parsed: GeneratedQueryDocument[] = [];
+  for (const entry of queries) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return null;
+    }
+    const doc = entry as Record<string, unknown>;
+    if (
+      typeof doc.query !== "string" ||
+      !GENERATION_TYPES.has(doc.type as string) ||
+      !GENERATION_LANGUAGES.has(doc.language as string) ||
+      !GENERATION_PURPOSES.has(doc.purpose as string)
+    ) {
+      return null;
+    }
+    parsed.push({
+      type: doc.type as GeneratedQueryDocument["type"],
+      query: doc.query,
+      language: doc.language as GeneratedQueryDocument["language"],
+      purpose: doc.purpose as GeneratedQueryDocument["purpose"],
+    });
+  }
+  if (outcome === "original_sufficient" && parsed.length > 0) return null;
+  if (outcome === "expanded" && parsed.length === 0) return null;
+  return { outcome, queries: parsed };
 }
