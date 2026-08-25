@@ -24,6 +24,7 @@ export async function fetchCandidatePool(
   try {
     return await store.search({
       queries: routes,
+      collections: request.collections.length > 0 ? request.collections : undefined,
       rerank: false,
       candidateLimit: CANDIDATE_POOL_SIZE,
       limit: CANDIDATE_POOL_SIZE,
