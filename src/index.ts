@@ -91,3 +91,34 @@ export {
   APPROVAL_PHRASE,
   obtainExplicitApproval,
 } from "./cli/approval.js";
+export {
+  MAX_RERANK_DOCUMENTS,
+  VALIDATED_MAX_TOKENS_PER_DOC,
+  VALIDATED_MAX_TOTAL_INPUT_TOKENS,
+  conservativeTokenUpperBound,
+  admitRerankRequest,
+  estimateWorstCaseAttemptCostUsd,
+  PayloadLimitExceededError,
+  type AdmittedRerankRequest,
+} from "./rerank/admission.js";
+export {
+  buildCohereRequest,
+  validateCohereResponse,
+  classifyFailure,
+  defaultRerankTransport,
+  InvalidProviderResponseError,
+  ClassifiedAttemptError,
+  type BuiltCohereRequest,
+  type FailureClassification,
+  type RerankHttpRequest,
+  type RerankHttpResponse,
+  type RerankTransport,
+} from "./rerank/cohere.js";
+export {
+  buildRerankingQuery,
+  assembleCandidates,
+  runRerankingStage,
+  type RerankingDeps,
+  type RerankingStageInput,
+  type RerankingStageOutcome,
+} from "./rerank/stage.js";
