@@ -6,6 +6,7 @@ import {
   admitRemoteRoutesWithContext,
   type AdmittedRouteContext,
 } from "../preflight/preflight.js";
+import { fingerprintPrivacyDeclaration } from "../preflight/privacy.js";
 import {
   CACHE_IDENTITY_VERSION,
   createFileResponseStore,
@@ -124,6 +125,7 @@ function cacheBindingsFor(
     "cache",
     `v${CACHE_IDENTITY_VERSION}`,
   );
+  const privacyFingerprint = fingerprintPrivacyDeclaration(context.declaration);
   const bindings: { expansion?: StageCacheBinding; reranking?: StageCacheBinding } = {};
   if (policy.expansion.enabled) {
     bindings.expansion = {
@@ -133,7 +135,7 @@ function cacheBindingsFor(
         ttlMs: policy.expansion.ttlSeconds * 1000,
         clock: systemClock,
       }),
-      privacyFingerprint: context.fingerprint,
+      privacyFingerprint,
     };
   }
   if (policy.reranking.enabled) {
@@ -144,7 +146,7 @@ function cacheBindingsFor(
         ttlMs: policy.reranking.ttlSeconds * 1000,
         clock: systemClock,
       }),
-      privacyFingerprint: context.fingerprint,
+      privacyFingerprint,
     };
   }
   return bindings;
