@@ -110,6 +110,8 @@ interface SelectedProfile {
   effective: EffectiveProfile;
   declaration: PrivacyDeclaration;
   fingerprint: string;
+  /** The profile's stored non-secret policy section (e.g. cache settings). */
+  policy: Record<string, unknown>;
 }
 
 function selectProfileForPreflight(
@@ -128,6 +130,7 @@ function selectProfileForPreflight(
     effective,
     declaration,
     fingerprint: profileFingerprint(effective, declaration, deps.pricing),
+    policy: raw?.policy ?? {},
   };
 }
 
@@ -253,24 +256,27 @@ export function recordProfileApproval(
 }
 
 /**
- * Search-time admission gate for remote routes. Resolves the selected
- * profile and fails closed unless:
- *
- * 1. an explicit approval is recorded for the exact current profile
- *    fingerprint; and
- * 2. every stage holds a live capability check with that same fingerprint,
- *    within the validity window (seven days normally, 24 hours for strict
- *    required-remote validation / acceptance runs).
- *
- * Returns null when no profile is selected (local-only mode). When it
- * returns, nothing has been transmitted anywhere; any deficiency throws a
- * configuration error so the caller emits the failure envelope without a
- * search payload.
+ * The full admission context the command layer needs to wire optional
+ * persistence surfaces (caches, diagnostics) to the admitted profile.
  */
-export function admitRemoteRoutes(
+export interface AdmittedRouteContext {
+  effective: EffectiveProfile;
+  declaration: PrivacyDeclaration;
+  /** Current profile fingerprint; participates in every cache identity. */
+  fingerprint: string;
+  /** Stored non-secret policy section of the selected profile. */
+  policy: Record<string, unknown>;
+}
+
+/**
+ * Search-time admission gate for remote routes, returning the full context
+ * (effective profile, privacy declaration, fingerprint, policy). See
+ * {@link admitRemoteRoutes} for the gate rules.
+ */
+export function admitRemoteRoutesWithContext(
   requestedProfile: string | null | undefined,
   options: { strict?: boolean } & PreflightDeps = {},
-): EffectiveProfile | null {
+): AdmittedRouteContext | null {
   const strict = options.strict ?? false;
   const selected = selectProfileForPreflight(requestedProfile, options);
   if (selected === null) return null;
@@ -309,5 +315,33 @@ export function admitRemoteRoutes(
       );
     }
   }
-  return selected.effective;
+  return {
+    effective: selected.effective,
+    declaration: selected.declaration,
+    fingerprint: selected.fingerprint,
+    policy: selected.policy,
+  };
+}
+
+/**
+ * Search-time admission gate for remote routes. Resolves the selected
+ * profile and fails closed unless:
+
+ * 1. an explicit approval is recorded for the exact current profile
+ *    fingerprint; and
+ * 2. every stage holds a live capability check with that same fingerprint,
+ *    within the validity window (seven days normally, 24 hours for strict
+ *    required-remote validation / acceptance runs).
+ *
+ * Returns null when no profile is selected (local-only mode). When it
+ * returns, nothing has been transmitted anywhere; any deficiency throws a
+ * configuration error so the caller emits the failure envelope without a
+ * search payload.
+ */
+export function admitRemoteRoutes(
+  requestedProfile: string | null | undefined,
+  options: { strict?: boolean } & PreflightDeps = {},
+): EffectiveProfile | null {
+  return admitRemoteRoutesWithContext(requestedProfile, options)?.effective ??
+    null;
 }

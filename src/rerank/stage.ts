@@ -24,6 +24,9 @@ import {
   reviewedProviderPricing,
   type ProviderPricingSource,
 } from "../core/pricing.js";
+import type { StageCacheBinding } from "../core/cache.js";
+import { rerankCacheIdentity } from "./cache.js";
+import { captureWrapTransport, type PayloadSink } from "../core/capture.js";
 import {
   admitRerankRequest,
   estimateWorstCaseAttemptCostUsd,
@@ -73,6 +76,18 @@ export interface RerankingDeps {
   /** Test seam for deterministic full-jitter backoff. */
   rng?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Opt-in persistent reranking response cache. When present, a valid
+   * cached score set for the exact request identity (ordered candidate
+   * identities and chunk hashes included) is returned without any
+   * transmission, cost reservation, or credential requirement.
+   */
+  rerankCache?: StageCacheBinding;
+  /**
+   * Explicit warned sensitive-payload-capture sink. When present, every
+   * transmitted attempt's request and response (or failure) is recorded.
+   */
+  capture?: PayloadSink;
 }
 
 const DEFAULT_SLEEP = (ms: number) =>
@@ -131,7 +146,14 @@ export async function runRerankingStage(
   runtime?: StageRuntime,
 ): Promise<RerankingStageOutcome> {
   const clock = deps.clock ?? systemClock;
-  const transport = deps.transport ?? defaultRerankTransport;
+  const rawTransport = deps.transport ?? defaultRerankTransport;
+  const transport = deps.capture
+    ? (captureWrapTransport(
+        rawTransport,
+        deps.capture,
+        "reranking",
+      ) as unknown as RerankTransport)
+    : rawTransport;
   const pricing = deps.pricing ?? reviewedProviderPricing;
   const rng = deps.rng ?? Math.random;
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
@@ -141,10 +163,14 @@ export async function runRerankingStage(
 
   let attempts = 0;
   let chargedUsd = 0;
+  const cache = deps.rerankCache ?? null;
+  // Cache state is surfaced in the envelope metadata only when a cache was
+  // actually consulted; absent means uncached (acceptance runs).
   const metadata = (): RemoteStageMetadata => ({
     attempts,
     retries: Math.max(0, attempts - 1),
     costUsd: Number(chargedUsd.toFixed(6)),
+    ...(cache === null ? {} : { cache: "miss" as const }),
   });
 
   const degraded = (
@@ -190,6 +216,37 @@ export async function runRerankingStage(
       buildRerankingQuery(input.originalQuery, input.intent),
       assembly.documents,
     );
+
+    // Opt-in cache lookup keyed by the full request identity (ordered
+    // candidate identities and selected-chunk hashes included): a valid
+    // cached score set returns with zero attempts and zero cost — no
+    // credential resolution, cost reservation, or transmission.
+    if (cache !== null) {
+      const cachedScores = readCachedScores(
+        cache.store.get(
+          rerankCacheIdentity(
+            route,
+            cache,
+            buildRerankingQuery(input.originalQuery, input.intent),
+            assembly.documents,
+          ),
+        ),
+        assembly.documents.length,
+      );
+      if (cachedScores !== null) {
+        const remoteRerankScores = new Map<HybridQueryResult, number>();
+        for (const doc of admitted.documents) {
+          const entry = input.pool[doc.poolIndex]!;
+          remoteRerankScores.set(entry, cachedScores[doc.index]!);
+        }
+        return {
+          report: { status: "ok", reason: null },
+          remoteRerankScores,
+          warning: null,
+          metadata: { attempts: 0, retries: 0, costUsd: 0, cache: "hit" },
+        };
+      }
+    }
 
     const credential = resolveCredential(route, deps.env ?? process.env);
     const rate = pricing.rateFor(route.provider, route.model);
@@ -242,6 +299,19 @@ export async function runRerankingStage(
           transport,
           timeoutMs,
         );
+        // Only the fully validated request-local score array is cached —
+        // never a credential, never the selected chunks themselves.
+        if (cache !== null) {
+          cache.store.put(
+            rerankCacheIdentity(
+              route,
+              cache,
+              buildRerankingQuery(input.originalQuery, input.intent),
+              assembly.documents,
+            ),
+            scores,
+          );
+        }
         const remoteRerankScores = new Map<HybridQueryResult, number>();
         for (const doc of admitted.documents) {
           const entry = input.pool[doc.poolIndex]!;
@@ -286,4 +356,29 @@ export async function runRerankingStage(
     const failure = classifyFailure(error, null);
     return degraded(failure.reason, `Reranking failed (${failure.detail}). Kept QMD fused order.`, failure.retryable);
   }
+}
+
+/**
+ * Re-validates a cached score array before use: exactly one finite [0,1]
+ * score per submitted candidate, in request order. Anything else is treated
+ * as a cache miss rather than trusted.
+ */
+export function readCachedScores(
+  value: unknown,
+  expectedCount: number,
+): number[] | null {
+  if (!Array.isArray(value) || value.length !== expectedCount) return null;
+  const scores: number[] = [];
+  for (const entry of value) {
+    if (
+      typeof entry !== "number" ||
+      !Number.isFinite(entry) ||
+      entry < 0 ||
+      entry > 1
+    ) {
+      return null;
+    }
+    scores.push(entry);
+  }
+  return scores;
 }
