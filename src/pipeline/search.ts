@@ -19,7 +19,12 @@ import {
   type SearchResultItem,
 } from "../core/envelope.js";
 import { internalError } from "../core/errors.js";
-import type { ReasonCode } from "../core/enums.js";
+import type {
+  ExpansionStatus,
+  PipelineStatus,
+  ReasonCode,
+  RerankingStatus,
+} from "../core/enums.js";
 import type { EffectiveProfile } from "../config/resolve.js";
 import { fetchCandidatePool } from "../qmd/retrieval.js";
 import { findProjectIndex } from "../qmd/paths.js";
@@ -42,6 +47,7 @@ import {
 } from "../expand/stage.js";
 import type { ExpandTransport } from "../expand/openai.js";
 import { localIndexUnavailableError } from "../core/errors.js";
+import { identityOf } from "./identity.js";
 
 export interface QueryRequest {
   /** Exact user-supplied query text, reflected verbatim in the envelope. */
@@ -114,8 +120,6 @@ export async function runQuery(
   const retrieval = await retrievalStage(
     request,
     expansion.generatedQueries,
-    expansion.usedRemoteRoute,
-    warnings,
     timing,
     clock,
     deps,
@@ -176,8 +180,6 @@ interface ExpansionStageReport {
   status: "expanded" | "original_sufficient" | "degraded" | "disabled";
   reason: ReasonCode | null;
   generatedQueries: GeneratedQueryDocument[];
-  /** True when a configured remote expansion route drove this stage. */
-  usedRemoteRoute: boolean;
   metadata: RemoteStageMetadata;
 }
 
@@ -198,7 +200,6 @@ async function expansionStage(
         status: "disabled",
         reason: null,
         generatedQueries: [],
-        usedRemoteRoute: false,
         metadata: IDLE_STAGE_METADATA,
       };
     }
@@ -210,7 +211,6 @@ async function expansionStage(
         status: "degraded",
         reason: UNCONFIGURED_ROUTE_CODE,
         generatedQueries: [],
-        usedRemoteRoute: false,
         metadata: IDLE_STAGE_METADATA,
       };
     }
@@ -222,7 +222,6 @@ async function expansionStage(
         status: "degraded",
         reason: "global_deadline_exceeded",
         generatedQueries: [],
-        usedRemoteRoute: false,
         metadata: IDLE_STAGE_METADATA,
       };
     }
@@ -243,7 +242,6 @@ async function expansionStage(
       status: outcome.status,
       reason: outcome.reason,
       generatedQueries: outcome.generatedQueries,
-      usedRemoteRoute: true,
       metadata: outcome.metadata,
     };
   } finally {
@@ -262,11 +260,14 @@ interface RetrievalOutcome {
  * then generated lexical routes, then the original vector route before the
  * generated vector and HyDE routes. Typed query documents keep their
  * explicit routes first, with surviving generated queries appended.
+ *
+ * Degraded, disabled, and unconfigured expansion all continue retrieval
+ * with the original lexical AND vector routes; QMDX never fabricates local
+ * expansion.
  */
 export function submissionRoutes(
   request: QueryRequest,
   generatedQueries: readonly GeneratedQueryDocument[],
-  expansionRanWithRemoteRoute: boolean,
 ): ExpandedQuery[] {
   const generated = generatedQueries.map((query) => ({
     type: query.type,
@@ -281,16 +282,9 @@ export function submissionRoutes(
       ...generated,
     ];
   }
-  if (!expansionRanWithRemoteRoute) {
-    // Disabled or unconfigured stages preserve the QMD-compatible local
-    // surface: the original lexical route only.
-    return [{ type: "lex", query: request.originalQuery }];
-  }
   return [
     { type: "lex", query: request.originalQuery },
     ...generated.filter((route) => route.type === "lex"),
-    // Degraded or original-sufficient expansion continues with the original
-    // lexical and vector routes; QMDX never fabricates local expansion.
     { type: "vec", query: request.originalQuery },
     ...generated.filter((route) => route.type === "vec"),
     ...generated.filter((route) => route.type === "hyde"),
@@ -300,8 +294,6 @@ export function submissionRoutes(
 async function retrievalStage(
   request: QueryRequest,
   generatedQueries: readonly GeneratedQueryDocument[],
-  expansionRanWithRemoteRoute: boolean,
-  _warnings: EnvelopeWarning[],
   timing: StageTimingCollector,
   clock: Clock,
   deps: SearchDeps,
@@ -324,7 +316,6 @@ async function retrievalStage(
       const routes = submissionRoutes(
         request,
         generatedQueries,
-        expansionRanWithRemoteRoute,
       );
       const pool = await fetchCandidatePool(store, {
         originalQuery: request.originalQuery,
@@ -438,14 +429,17 @@ function globalDeadlineWarning(stage: "expansion" | "reranking"): EnvelopeWarnin
   };
 }
 
+/**
+ * Only degradation distinguishes the overall pipeline status; every other
+ * stage state yields "ok".
+ */
 function overallStatus(
-  ...statuses: Array<
-    "ok" | "degraded" | "disabled" | "expanded" | "original_sufficient"
-  >
-) {
-  return statuses.some((status) => status === "degraded")
-    ? ("degraded" as const)
-    : ("ok" as const);
+  expansion: ExpansionStatus,
+  reranking: RerankingStatus,
+): PipelineStatus {
+  return expansion === "degraded" || reranking === "degraded"
+    ? "degraded"
+    : "ok";
 }
 
 function shapeResults(
@@ -474,9 +468,10 @@ function shapeResults(
       identityOf(a.entry).localeCompare(identityOf(b.entry)),
   );
 
-  const filtered = request.minScore === null
+  const minScore = request.minScore;
+  const filtered = minScore === null
     ? scored
-    : scored.filter((item) => item.publicScore >= request.minScore!);
+    : scored.filter((item) => item.publicScore >= minScore);
 
   const results: SearchResultItem[] = [];
   const paths: string[] = [];
@@ -546,10 +541,6 @@ export function explanationFor(
     remoteRerankScore: remoteScore,
     finalScore,
   };
-}
-
-function identityOf(entry: HybridQueryResult): string {
-  return `${entry.file}\u0000${entry.docid}`;
 }
 
 function snippetFor(entry: HybridQueryResult): string | null {

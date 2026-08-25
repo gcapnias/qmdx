@@ -7,6 +7,15 @@ import {
   EXPANSION_SCHEMA_NAME,
   EXPANSION_SYSTEM_PROMPT,
 } from "./schema.js";
+import type {
+  FailureClassification,
+} from "../core/remote-stage.js";
+import {
+  ClassifiedAttemptError,
+} from "../core/remote-stage.js";
+
+export type { FailureClassification };
+export { ClassifiedAttemptError };
 
 /**
  * OpenAI-compatible chat-completions expansion adapter: payload
@@ -303,23 +312,6 @@ function assertWellTypedEntry(entry: unknown): void {
   // independently of invalid siblings.
 }
 
-export interface FailureClassification {
-  reason:
-    | "transport_error"
-    | "timeout"
-    | "rate_limited"
-    | "provider_unavailable"
-    | "authentication_failed"
-    | "billing_or_quota_exhausted"
-    | "provider_policy_rejected"
-    | "unsupported_capability"
-    | "invalid_provider_response";
-  retryable: boolean;
-  /** Provider-suggested wait in milliseconds, when a Retry-After header exists. */
-  retryAfterMs: number | null;
-  detail: string;
-}
-
 /**
  * Classifies one failed attempt. Transient failures (transport error,
  * timeout, HTTP 408/429/5xx, invalid/incomplete response) are retryable at
@@ -451,17 +443,8 @@ export async function executeExpansionAttempt(
   }
 }
 
-export class ClassifiedAttemptError extends Error {
-  readonly classification: FailureClassification;
-  constructor(classification: FailureClassification) {
-    super(`Expansion attempt failed: ${classification.detail}`);
-    this.name = "ClassifiedAttemptError";
-    this.classification = classification;
-  }
-}
-
 function classifiedError(classification: FailureClassification): ClassifiedAttemptError {
-  return new ClassifiedAttemptError(classification);
+  return new ClassifiedAttemptError(classification, "Expansion");
 }
 
 function parseRetryAfterMs(value: string | undefined): number | null {

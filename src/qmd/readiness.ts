@@ -46,7 +46,7 @@ function round1(value: number): number {
  *    effective model and fingerprint (warn at or below 10% with count+pct);
  * 4. run a fixed local-only searchVector({ limit: 1 }) readiness probe and
  *    fail when it throws or retrieves nothing from an otherwise complete,
- *    non-empty index.
+ *    non-empty index (coverage checks having already passed).
  *
  * Staleness is reported as a diagnostic and never gates usability.
  */
@@ -112,7 +112,10 @@ export async function validateIndexReadiness(
     );
   }
 
-  if (probeResults === 0 && needsEmbedding === 0) {
+  if (probeResults === 0) {
+    // Coverage checks already passed, so the index is otherwise complete
+    // and non-empty: a zero-retrieval probe fails regardless of how many
+    // documents still carry the ≤10% coverage warning.
     throw vectorProbeFailedError(
       "Vector readiness probe retrieved no results from an otherwise complete, non-empty index.",
     );

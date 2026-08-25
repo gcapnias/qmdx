@@ -7,7 +7,6 @@ export const EXPANSION_STATUSES = [
   "degraded",
   "disabled",
 ] as const;
-export const RETRIEVAL_STATUSES = ["ok"] as const;
 export const RERANKING_STATUSES = ["ok", "degraded", "disabled"] as const;
 
 export const WARNING_STAGES = ["expansion", "reranking"] as const;
@@ -60,7 +59,6 @@ export const GENERATION_PURPOSES_BY_TYPE = {
 
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
 export type ExpansionStatus = (typeof EXPANSION_STATUSES)[number];
-export type RetrievalStatus = (typeof RETRIEVAL_STATUSES)[number];
 export type RerankingStatus = (typeof RERANKING_STATUSES)[number];
 export type WarningStage = (typeof WARNING_STAGES)[number];
 export type ReasonCode = (typeof REASON_CODES)[number];

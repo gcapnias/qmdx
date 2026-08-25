@@ -4,10 +4,8 @@ import type { Clock } from "../core/clock.js";
 import { systemClock } from "../core/clock.js";
 import {
   DEFAULT_EXPANSION_STAGE_BUDGET_MS,
-  DEFAULT_QUERY_COST_CEILING_USD,
   EXPANSION_ATTEMPT_TIMEOUT_CAP_MS,
   MAX_ATTEMPTS_PER_STAGE,
-  RETRY_BACKOFF_BASE_MS,
 } from "../core/budgets.js";
 import type {
   EnvelopeWarning,
@@ -15,7 +13,21 @@ import type {
   RemoteStageMetadata,
 } from "../core/envelope.js";
 import type { ReasonCode } from "../core/enums.js";
+import {
+  GENERATED_QUERY_TYPES,
+  GENERATION_LANGUAGES,
+  GENERATION_PURPOSES_BY_TYPE,
+} from "../core/enums.js";
 import { QmdxError, internalError } from "../core/errors.js";
+import {
+  ClassifiedAttemptError,
+  DEFAULT_STAGE_SLEEP,
+  newAttemptState,
+  precludedMessage,
+  remoteStageWarning,
+  runAdmittedAttempts,
+  stageMetadata,
+} from "../core/remote-stage.js";
 import {
   selfContainedStageRuntime,
   type StageRuntime,
@@ -37,7 +49,6 @@ import {
   EXPANSION_SYSTEM_PROMPT,
 } from "./schema.js";
 import {
-  ClassifiedAttemptError,
   defaultExpandTransport,
   executeExpansionAttempt,
   type ExpandTransport,
@@ -88,8 +99,10 @@ export interface ExpansionDeps {
   capture?: PayloadSink;
 }
 
-const DEFAULT_SLEEP = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+interface SuccessfulExpansion {
+  outcome: "expanded" | "original_sufficient";
+  queries: GeneratedQueryDocument[];
+}
 
 /**
  * Runs the whole expansion stage with at most one retry, conservative cost
@@ -110,32 +123,25 @@ export async function runExpansionStage(
   const clock = deps.clock ?? systemClock;
   const rawTransport = deps.transport ?? defaultExpandTransport;
   const transport = deps.capture
-    ? (captureWrapTransport(
-        rawTransport,
-        deps.capture,
-        "expansion",
-      ) as unknown as ExpandTransport)
+    ? captureWrapTransport(rawTransport, deps.capture, "expansion")
     : rawTransport;
   const pricing = deps.pricing ?? reviewedProviderPricing;
   const rng = deps.rng ?? Math.random;
-  const sleep = deps.sleep ?? DEFAULT_SLEEP;
+  const sleep = deps.sleep ?? DEFAULT_STAGE_SLEEP;
   // Without an orchestrator-provided runtime the stage is self-contained:
   // fresh stage budget and query ceiling, no global deadline.
   const rt = runtime ?? selfContainedStageRuntime(clock, DEFAULT_EXPANSION_STAGE_BUDGET_MS);
 
-  let attempts = 0;
-  let chargedUsd = 0;
+  const state = newAttemptState();
   let usage: ExpansionUsage | undefined;
   const cache = deps.expansionCache ?? null;
   // Cache state is surfaced in the envelope metadata only when a cache was
   // actually consulted; absent means uncached (acceptance runs).
-  const metadata = (): RemoteStageMetadata => ({
-    attempts,
-    retries: Math.max(0, attempts - 1),
-    costUsd: Number(chargedUsd.toFixed(6)),
-    ...(usage === undefined ? {} : { usage }),
-    ...(cache === null ? {} : { cache: "miss" as const }),
-  });
+  const metadata = () =>
+    stageMetadata(state, {
+      ...(usage === undefined ? {} : { usage }),
+      ...(cache === null ? {} : { cache: "miss" as const }),
+    });
 
   const degraded = (
     reason: ReasonCode,
@@ -145,7 +151,7 @@ export async function runExpansionStage(
     status: "degraded",
     reason,
     generatedQueries: [],
-    warning: { stage: "expansion", code: reason, message, retryable },
+    warning: remoteStageWarning("expansion", reason, message, retryable),
     metadata: metadata(),
   });
 
@@ -194,139 +200,87 @@ export async function runExpansionStage(
     const rate = pricing.rateFor(route.provider, route.model);
     const shape = estimateExpansionAttemptShape(EXPANSION_SYSTEM_PROMPT, admittedQuery);
 
-    let lastFailure: ClassifiedAttemptError | null = null;
+    const loop = await runAdmittedAttempts({
+      runtime: rt,
+      rng,
+      sleep,
+      state,
+      estimateCostUsd: () => estimateWorstCaseAttemptCostUsd(shape, rate),
+      attemptTimeoutCapMs: EXPANSION_ATTEMPT_TIMEOUT_CAP_MS,
+      executeAttempt: async (timeoutMs) => {
+        let parsed;
+        try {
+          parsed = await executeExpansionAttempt(route, credential, admittedQuery, transport, timeoutMs);
+        } catch (error) {
+          if (error instanceof ClassifiedAttemptError) throw error;
+          throw internalExpansionFault(error);
+        }
+        // Provider-reported usage rides on the raw attempt even when its
+        // generated entries all fail validation below.
+        if (parsed.usage !== undefined) usage = parsed.usage;
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_STAGE; attempt++) {
-      // Cancellation first: once the hard end-to-end deadline has passed the
-      // stage is cancelled, never completed with a late transmission.
-      if (rt.globalExpired()) {
-        return degraded(
-          "global_deadline_exceeded",
-          "The hard end-to-end search deadline expired; the expansion stage was cancelled. Kept the original lexical and vector routes.",
-          false,
-        );
-      }
-      if (rt.remainingStageMs() <= 0) {
-        return degraded(
-          "stage_budget_exceeded",
-          "The cumulative expansion budget was exhausted before transmission. Kept the original lexical and vector routes.",
-          false,
-        );
-      }
-      // Cost admission before every attempt: no attempt may be sent unless
-      // its worst-case billable cost fits the remaining query ceiling. The
-      // estimate is reserved against the orchestrator's cumulative ledger.
-      const attemptCostUsd = estimateWorstCaseAttemptCostUsd(shape, rate);
-      if (!rt.reserveAttemptCost(attemptCostUsd)) {
-        return degraded(
-          "cost_budget_exceeded",
-          `Estimated worst-case expansion cost would exceed the US$${DEFAULT_QUERY_COST_CEILING_USD.toFixed(2)} query cost budget. Kept the original lexical and vector routes.`,
-          false,
-        );
-      }
-      chargedUsd += attemptCostUsd;
-      attempts += 1;
+        if (parsed.outcome === "original_sufficient") {
+          const sufficient: SuccessfulExpansion = {
+            outcome: "original_sufficient",
+            queries: [],
+          };
+          return sufficient;
+        }
 
-      // Remaining-time admission: an attempt never starts when its duration
-      // cannot fit the remaining stage budget or the global deadline.
-      const timeoutMs = Math.min(
-        rt.remainingStageMs(),
-        rt.remainingGlobalMs(),
-        EXPANSION_ATTEMPT_TIMEOUT_CAP_MS,
-      );
-      let parsed;
-      try {
-        parsed = await executeExpansionAttempt(
-          route,
-          credential,
+        // Validate every entry independently; partial valid expansion
+        // succeeds without a retry. No entry surviving means the whole
+        // provider response was unusable and may retry once.
+        const { queries, discardedCount } = validateGeneratedQueries(
+          parsed.entries,
           admittedQuery,
-          transport,
-          timeoutMs,
         );
-      } catch (error) {
-        if (!(error instanceof ClassifiedAttemptError)) {
-          throw internalError("The expansion adapter failed unexpectedly.", error);
-        }
-        lastFailure = error;
-        if (!error.classification.retryable || attempt === MAX_ATTEMPTS_PER_STAGE) {
-          break;
-        }
-        // Full-jitter backoff bounded by the remaining stage budget AND the
-        // global deadline; honor Retry-After only when it fits both.
-        const allowanceMs = Math.min(rt.remainingStageMs(), rt.remainingGlobalMs());
-        const waitMs = error.classification.retryAfterMs ??
-          Math.floor(rng() * RETRY_BACKOFF_BASE_MS);
-        if (waitMs > 0 && waitMs < allowanceMs) {
-          await sleep(waitMs);
-        }
-        continue;
-      }
-
-      if (parsed.usage !== undefined) usage = parsed.usage;
-
-      if (parsed.outcome === "original_sufficient") {
-        if (cache !== null) {
-          cache.store.put(
-            expansionCacheIdentity(route, cache, admittedQuery),
-            { outcome: "original_sufficient", queries: [] },
+        if (queries.length === 0) {
+          throw new ClassifiedAttemptError(
+            {
+              reason: "invalid_provider_response",
+              retryable: true,
+              retryAfterMs: null,
+              detail:
+                discardedCount > 0
+                  ? `all ${discardedCount} generated queries violated the validation rules`
+                  : "the provider returned no generated queries for an expanded outcome",
+            },
+            "Expansion",
           );
         }
-        return {
-          status: "original_sufficient",
-          reason: null,
-          generatedQueries: [],
-          warning: null,
-          metadata: metadata(),
-        };
-      }
+        const expanded: SuccessfulExpansion = { outcome: "expanded", queries };
+        return expanded;
+      },
+    });
 
-      // Validate every entry independently; partial valid expansion succeeds
-      // without a retry.
-      const { queries, discardedCount } = validateGeneratedQueries(
-        parsed.entries,
-        admittedQuery,
+    if (loop.kind === "precluded") {
+      return degraded(loop.reason, precludedMessage(loop.reason, "expansion"), false);
+    }
+    if (loop.kind === "exhausted") {
+      const { classification } = loop;
+      return degraded(
+        classification.reason,
+        `Expansion failed after ${MAX_ATTEMPTS_PER_STAGE} attempts (${classification.detail}). Kept the original lexical and vector routes.`,
+        classification.retryable,
       );
-      if (queries.length > 0) {
-        // Only the fully validated result is cached; the stored value is the
-        // generated-query set — never a credential and never corpus content.
-        if (cache !== null) {
-          cache.store.put(
-            expansionCacheIdentity(route, cache, admittedQuery),
-            { outcome: "expanded", queries },
-          );
-        }
-        return {
-          status: "expanded",
-          reason: null,
-          generatedQueries: queries,
-          warning: null,
-          metadata: metadata(),
-        };
-      }
-      // No entry survived: the whole provider response was unusable.
-      lastFailure = new ClassifiedAttemptError({
-        reason: "invalid_provider_response",
-        retryable: true,
-        retryAfterMs: null,
-        detail:
-          discardedCount > 0
-            ? `all ${discardedCount} generated queries violated the validation rules`
-            : "the provider returned no generated queries for an expanded outcome",
-      });
-      if (attempt === MAX_ATTEMPTS_PER_STAGE) break;
-      const allowanceMs = Math.min(rt.remainingStageMs(), rt.remainingGlobalMs());
-      const waitMs = Math.floor(rng() * RETRY_BACKOFF_BASE_MS);
-      if (waitMs > 0 && waitMs < allowanceMs) {
-        await sleep(waitMs);
-      }
     }
 
-    const classification = lastFailure!.classification;
-    return degraded(
-      classification.reason as ReasonCode,
-      `Expansion failed after ${MAX_ATTEMPTS_PER_STAGE} attempts (${classification.detail}). Kept the original lexical and vector routes.`,
-      classification.retryable,
-    );
+    const success: SuccessfulExpansion = loop.value;
+    // Only the fully validated result is cached; the stored value is the
+    // generated-query set — never a credential and never corpus content.
+    if (cache !== null) {
+      cache.store.put(
+        expansionCacheIdentity(route, cache, admittedQuery),
+        { outcome: success.outcome, queries: success.queries },
+      );
+    }
+    return {
+      status: success.outcome,
+      reason: null,
+      generatedQueries: success.queries,
+      warning: null,
+      metadata: metadata(),
+    };
   } catch (error) {
     if (error instanceof QmdxError) throw error;
     return degraded(
@@ -337,14 +291,17 @@ export async function runExpansionStage(
   }
 }
 
-const GENERATION_TYPES: ReadonlySet<string> = new Set(["lex", "vec", "hyde"]);
-const GENERATION_LANGUAGES: ReadonlySet<string> = new Set(["en", "el", "und"]);
-const GENERATION_PURPOSES: ReadonlySet<string> = new Set([
-  "terminology",
-  "translation",
-  "semantic",
-  "hypothetical",
-]);
+function internalExpansionFault(error: unknown): Error {
+  if (error instanceof ClassifiedAttemptError) return error;
+  return internalError("The expansion adapter failed unexpectedly.", error);
+}
+
+// Single-sourced validation vocabularies, derived from core/enums.ts.
+const GENERATION_TYPES: ReadonlySet<string> = new Set(GENERATED_QUERY_TYPES);
+const GENERATION_LANGUAGES_SET: ReadonlySet<string> = new Set(GENERATION_LANGUAGES);
+const GENERATION_PURPOSES: ReadonlySet<string> = new Set(
+  Object.values(GENERATION_PURPOSES_BY_TYPE).flat(),
+);
 
 /**
  * Re-validates a cached expansion response before use. Anything malformed,
@@ -373,7 +330,7 @@ export function readCachedExpansion(
     if (
       typeof doc.query !== "string" ||
       !GENERATION_TYPES.has(doc.type as string) ||
-      !GENERATION_LANGUAGES.has(doc.language as string) ||
+      !GENERATION_LANGUAGES_SET.has(doc.language as string) ||
       !GENERATION_PURPOSES.has(doc.purpose as string)
     ) {
       return null;
