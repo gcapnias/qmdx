@@ -15,7 +15,8 @@ export interface CommandIo {
 
 export function wantsJsonOutput(argv: readonly string[]): boolean {
   return (
-    argv.includes("--format") && argv[argv.indexOf("--format") + 1] === "json"
+    (argv.includes("--format") && argv[argv.indexOf("--format") + 1] === "json") ||
+    argv.includes("--format=json")
   );
 }
 

@@ -37,6 +37,15 @@ function expectSingleJson<T>(stdout: string): T {
 }
 
 describe("query --format json", () => {
+  it("accepts --format=json", async () => {
+    const run = await runCli(["query", "embeddings", "--format=json"], index.root);
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+
+    const envelope = expectSingleJson<ResultEnvelope>(run.stdout);
+    expect(envelope.query.original).toBe("embeddings");
+  });
+
   it("returns one result envelope on stdout with empty stderr and exit 0", async () => {
     const run = await runCli(
       ["query", "embeddings", "--format", "json", "--explain"],
@@ -266,6 +275,10 @@ describe("invocation errors", () => {
     const missing = await runCli(["query", "--format", "json"], index.root);
     expect(missing.status).toBe(2);
     expect(JSON.parse(missing.stderr).error.code).toBe("invalid_invocation");
+
+    const equalsMissing = await runCli(["query", "--format=json"], index.root);
+    expect(equalsMissing.status).toBe(2);
+    expect(JSON.parse(equalsMissing.stderr).error.code).toBe("invalid_invocation");
 
     const blank = await runCli(["query", "   ", "--format", "json"], index.root);
     expect(blank.status).toBe(2);

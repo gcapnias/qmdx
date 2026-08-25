@@ -67,6 +67,10 @@ export function parseQueryArgs(argv: readonly string[]): ParsedQueryInvocation {
       positional.push(arg);
       continue;
     }
+    if (arg.startsWith("--format=")) {
+      format = parseFormat(arg.slice("--format=".length));
+      continue;
+    }
     if (!FLAGS_WITH_VALUE.has(arg) && !BOOLEAN_FLAGS.has(arg)) {
       throw unsupportedOptionError(arg);
     }
