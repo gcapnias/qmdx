@@ -156,10 +156,18 @@ export function buildExpansionRequest(
 
 export type ExpansionOutcome = "expanded" | "original_sufficient";
 
+/** Provider-reported token usage for one expansion attempt. */
+export interface ExpansionUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface ParsedExpansionResponse {
   outcome: ExpansionOutcome;
   /** Raw generated-query entries for local validation. */
   entries: unknown[];
+  /** Token usage when the provider response carries a well-typed usage object. */
+  usage?: ExpansionUsage;
 }
 
 export class InvalidProviderResponseError extends Error {
@@ -243,6 +251,37 @@ export function validateExpansionResponse(body: unknown): ParsedExpansionRespons
     );
   }
   return { outcome, entries: queries };
+}
+
+/**
+ * Extracts provider-reported usage when present and well-typed; diagnostics
+ * metadata only — never a substitute for conservative cost admission.
+ */
+export function extractUsage(
+  body: Record<string, unknown>,
+): ExpansionUsage | undefined {
+  const usage = body.usage;
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    return undefined;
+  }
+  const reported = usage as Record<string, unknown>;
+  const inputTokens =
+    typeof reported.prompt_tokens === "number" &&
+      Number.isFinite(reported.prompt_tokens)
+      ? reported.prompt_tokens
+      : undefined;
+  const outputTokens =
+    typeof reported.completion_tokens === "number" &&
+      Number.isFinite(reported.completion_tokens)
+      ? reported.completion_tokens
+      : undefined;
+  if (inputTokens === undefined && outputTokens === undefined) {
+    return undefined;
+  }
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+  };
 }
 
 function assertWellTypedEntry(entry: unknown): void {
@@ -402,7 +441,11 @@ export async function executeExpansionAttempt(
     );
   }
   try {
-    return validateExpansionResponse(body);
+    const parsed = validateExpansionResponse(body);
+    // Provider-reported usage rides on the raw response body, outside the
+    // strict-schema message content.
+    const usage = extractUsage(body as Record<string, unknown>);
+    return usage === undefined ? parsed : { ...parsed, usage };
   } catch (cause) {
     throw classifiedError(classifyFailure(cause, null));
   }

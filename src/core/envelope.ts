@@ -27,10 +27,34 @@ export interface GeneratedQueryDocument {
   purpose: GenerationPurpose;
 }
 
+/**
+ * Provider-reported token usage for one remote stage, when the provider
+ * response carries it. Optional v1 addition (versioning rule: new optional
+ * members are allowed within a schema version).
+ */
+export interface StageUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+/**
+ * Mandatory degradation metadata for a remote stage: attempts actually
+ * transmitted, retries performed, and the conservative worst-case billable
+ * cost reserved for the stage in USD (docs/spec/qmdx-v1.md "Degradation":
+ * retries + cost metadata are mandatory).
+ */
+export interface RemoteStageMetadata {
+  attempts: number;
+  retries: number;
+  costUsd: number;
+  usage?: StageUsage;
+}
+
 export interface ExpansionStageReport {
   status: ExpansionStatus;
   reason: ReasonCode | null;
   generatedQueries: GeneratedQueryDocument[];
+  metadata: RemoteStageMetadata;
 }
 
 export interface RetrievalStageReport {
@@ -44,6 +68,7 @@ export interface RerankingStageReport {
   status: RerankingStatus;
   reason: ReasonCode | null;
   candidateCount: number;
+  metadata: RemoteStageMetadata;
 }
 
 export interface PipelineReport {
