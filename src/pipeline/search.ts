@@ -12,11 +12,19 @@ import type { ReasonCode } from "../core/enums.js";
 import { fetchCandidatePool } from "../qmd/retrieval.js";
 import { findProjectIndex } from "../qmd/paths.js";
 import { openProjectStore } from "../qmd/store.js";
+import type { EffectiveProfile } from "../config/resolve.js";
 import {
+  blendedFinalScore,
   DEGRADED_POSITION_WEIGHT,
   qmdPositionScore,
+  retrievalWeightForRank,
   round6,
 } from "./score.js";
+import {
+  runRerankingStage,
+  type RerankingDeps,
+} from "../rerank/stage.js";
+import type { RerankTransport } from "../rerank/cohere.js";
 import { localIndexUnavailableError } from "../core/errors.js";
 
 export interface QueryRequest {
@@ -42,9 +50,22 @@ export interface QueryOutcome {
   resultPaths: string[];
 }
 
-export interface SearchDeps {
+export interface SearchDeps extends RerankingDeps {
   clock?: Clock;
+  /**
+   * The admitted effective profile from search-time route admission
+   * (`admitRemoteRoutes`). `null` means no profile is configured and the
+   * remote stages degrade with the stable unconfigured-route warnings;
+   * leaving it undefined is treated the same as null by this module.
+   */
+  effectiveProfile?: EffectiveProfile | null;
+  /** Test seam: replaces QMD local retrieval entirely. */
+  fetchPool?: (
+    request: QueryRequest,
+  ) => Promise<HybridQueryResult[]>;
 }
+
+export type { RerankTransport };
 
 interface StageTimingCollector {
   expansionMs: number;
@@ -64,8 +85,8 @@ export async function runQuery(
   const timing = { expansionMs: 0, retrievalMs: 0, rerankingMs: 0 };
 
   const expansion = expansionStage(request, warnings, timing, clock);
-  const retrieval = await retrievalStage(request, warnings, timing, clock);
-  const reranking = rerankingStage(retrieval.pool.length, request, warnings);
+  const retrieval = await retrievalStage(request, warnings, timing, clock, deps);
+  const reranking = await rerankingStage(retrieval.pool, request, warnings, timing, clock, deps);
 
   const shaped = shapeResults(
     retrieval.pool,
@@ -146,9 +167,13 @@ async function retrievalStage(
   _warnings: EnvelopeWarning[],
   timing: StageTimingCollector,
   clock: Clock,
+  deps: SearchDeps,
 ): Promise<RetrievalOutcome> {
   const stageStart = clock.nowMs();
   try {
+    if (deps.fetchPool !== undefined) {
+      return { pool: await deps.fetchPool(request) };
+    }
     const location = findProjectIndex();
     if (location === null) {
       throw localIndexUnavailableError(
@@ -184,23 +209,45 @@ function retrievalRoutes(request: QueryRequest): ExpandedQuery[] {
   return [{ type: "lex", query: request.originalQuery }];
 }
 
-function rerankingStage(
-  candidateCount: number,
+async function rerankingStage(
+  pool: HybridQueryResult[],
   request: QueryRequest,
   warnings: EnvelopeWarning[],
-): {
+  timing: StageTimingCollector,
+  clock: Clock,
+  deps: SearchDeps,
+): Promise<{
   report: { status: "ok" | "degraded" | "disabled"; reason: ReasonCode | null };
   remoteRerankScores: Map<HybridQueryResult, number> | null;
-} {
-  void candidateCount;
+}> {
   if (request.noRerank) {
     return { report: { status: "disabled", reason: null }, remoteRerankScores: null };
   }
-  warnings.push(unconfiguredWarning("reranking"));
-  return {
-    report: { status: "degraded", reason: UNCONFIGURED_ROUTE_CODE },
-    remoteRerankScores: null,
-  };
+  const stageStart = clock.nowMs();
+  try {
+    const route = deps.effectiveProfile?.reranking ?? null;
+    if (route === null) {
+      // Local-only mode: keep the stable unconfigured-route degradation.
+      warnings.push(unconfiguredWarning("reranking"));
+      return {
+        report: { status: "degraded", reason: UNCONFIGURED_ROUTE_CODE },
+        remoteRerankScores: null,
+      };
+    }
+    const outcome = await runRerankingStage(
+      {
+        pool,
+        originalQuery: request.originalQuery,
+        intent: request.intent,
+      },
+      route,
+      deps,
+    );
+    if (outcome.warning !== null) warnings.push(outcome.warning);
+    return outcome;
+  } finally {
+    timing.rerankingMs = clock.nowMs() - stageStart;
+  }
 }
 
 function unconfiguredWarning(stage: "expansion" | "reranking"): EnvelopeWarning {
@@ -224,13 +271,21 @@ function overallStatus(...statuses: Array<"ok" | "degraded" | "disabled">) {
 function shapeResults(
   pool: HybridQueryResult[],
   request: QueryRequest,
-  _remoteRerankScores: Map<HybridQueryResult, number> | null,
+  remoteRerankScores: Map<HybridQueryResult, number> | null,
 ): { results: SearchResultItem[]; paths: string[] } {
-  const scored = pool.map((entry) => ({
-    entry,
-    rrfRank: rrfRankOf(entry),
-    publicScore: publicScoreFor(entry),
-  }));
+  const scored = pool.map((entry) => {
+    const rrfRank = rrfRankOf(entry);
+    const remoteScore = remoteRerankScores?.get(entry);
+    return {
+      entry,
+      rrfRank,
+      remoteScore: remoteScore ?? null,
+      publicScore:
+        remoteScore === undefined
+          ? qmdPositionScore(rrfRank)
+          : blendedFinalScore(rrfRank, remoteScore),
+    };
+  });
 
   scored.sort(
     (a, b) =>
@@ -260,7 +315,11 @@ function shapeResults(
       result.body = item.entry.body;
     }
     if (request.explain) {
-      result.explanation = explanationFor(item.rrfRank, item.publicScore);
+      result.explanation = explanationFor(
+        item.rrfRank,
+        item.remoteScore,
+        item.publicScore,
+      );
     }
     results.push(result);
     paths.push(
@@ -280,18 +339,31 @@ function rrfRankOf(entry: HybridQueryResult): number {
   return rank;
 }
 
-function publicScoreFor(entry: HybridQueryResult): number {
-  return qmdPositionScore(rrfRankOf(entry));
-}
-
+/**
+ * Builds the per-result explanation. When the entry was successfully
+ * remotely reranked, `qmdPositionWeight` is its rank-band retrieval weight,
+ * `remoteRerankScore` carries the request-local provider score, and
+ * `finalScore` is the blended score. Otherwise the degraded/disabled shape
+ * applies: weight 1, null remote score, final score equal to the position
+ * score.
+ */
 export function explanationFor(
   qmdRrfRank: number,
+  remoteScore: number | null,
   finalScore: number,
 ): SearchResultItem["explanation"] {
+  if (remoteScore === null) {
+    return {
+      qmdRrfRank,
+      qmdPositionWeight: DEGRADED_POSITION_WEIGHT,
+      remoteRerankScore: null,
+      finalScore,
+    };
+  }
   return {
     qmdRrfRank,
-    qmdPositionWeight: DEGRADED_POSITION_WEIGHT,
-    remoteRerankScore: null,
+    qmdPositionWeight: retrievalWeightForRank(qmdRrfRank),
+    remoteRerankScore: remoteScore,
     finalScore,
   };
 }

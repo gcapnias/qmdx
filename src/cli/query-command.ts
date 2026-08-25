@@ -23,11 +23,11 @@ export async function runQueryCommand(
     const invocation = parseQueryArgs(argv);
     // Fail closed before any work: a selected profile must carry current
     // approval and live checks, otherwise nothing is transmitted at all.
-    admitRemoteRoutes(invocation.profile, {
+    const effectiveProfile = admitRemoteRoutes(invocation.profile, {
       strict: invocation.requireRemote,
     });
 
-    const outcome = await runQuery(invocation);
+    const outcome = await runQuery(invocation, { effectiveProfile });
     const envelope = outcome.envelope;
 
     if (invocation.requireRemote) {
