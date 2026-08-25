@@ -1,0 +1,42 @@
+{
+  "name": "@gcapnias/qmdx",
+  "version": "0.1.0",
+  "description": "QMDX is a search companion for QMD that adds remote inference to QMD-backed search.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gcapnias/qmdx.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "qmdx": "./dist/bin/qmdx.js",
+    "qmdx-bench": "./dist/bin/qmdx-bench.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "check:package": "node scripts/check-package.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && npm run check:package && vitest run"
+  },
+  "dependencies": {
+    "@tobilu/qmd": "2.8.3",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true,
+    "esbuild@0.28.2": true,
+    "node-llama-cpp@3.20.0": true
+  }
+}
