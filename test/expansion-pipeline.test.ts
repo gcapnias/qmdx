@@ -123,7 +123,7 @@ describe("canonical retrieval-route submission order", () => {
         language: "el",
         purpose: "translation",
       }),
-    ], true);
+    ]);
     expect(routes).toEqual([
       { type: "lex", query: "find things" },
       { type: "lex", query: "terminology variant" },
@@ -135,16 +135,17 @@ describe("canonical retrieval-route submission order", () => {
   });
 
   it("keeps original lexical and vector routes when expansion degrades", () => {
-    const routes = submissionRoutes(baseRequest(), [], true);
+    const routes = submissionRoutes(baseRequest(), []);
     expect(routes).toEqual([
       { type: "lex", query: "find things" },
       { type: "vec", query: "find things" },
     ]);
   });
 
-  it("preserves the local-only single lexical route when disabled or unconfigured", () => {
-    expect(submissionRoutes(baseRequest(), [], false)).toEqual([
+  it("continues with the original lexical and vector routes when expansion is disabled or unconfigured", () => {
+    expect(submissionRoutes(baseRequest(), [])).toEqual([
       { type: "lex", query: "find things" },
+      { type: "vec", query: "find things" },
     ]);
   });
 
@@ -158,7 +159,7 @@ describe("canonical retrieval-route submission order", () => {
     });
     const routes = submissionRoutes(request, [
       generated({ query: "appended" }),
-    ], true);
+    ]);
     expect(routes).toEqual([
       { type: "vec", query: "explicit vector route" },
       { type: "lex", query: "appended" },
@@ -254,8 +255,9 @@ describe("runQuery expansion integration", () => {
     expect(outcome.envelope.pipeline.expansion.reason).toBeNull();
     expect(outcome.envelope.warnings).toEqual([]);
     expect(transport.calls).toHaveLength(0);
-    expect(submissionRoutes(baseRequest({ noExpand: true }), [], false)).toEqual([
+    expect(submissionRoutes(baseRequest({ noExpand: true }), [])).toEqual([
       { type: "lex", query: "find things" },
+      { type: "vec", query: "find things" },
     ]);
   });
 

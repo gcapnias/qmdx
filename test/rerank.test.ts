@@ -559,6 +559,32 @@ describe("stage orchestration", () => {
     expect(outcome.report.reason).toBe("payload_limit_exceeded");
   });
 
+  it("degrades the whole stage instead of mixing score semantics when any candidate lacks a chunk", async () => {
+    const transport = stubTransport(() => ({
+      status: 200,
+      body: okBody([0.9]),
+    }));
+    const pool = [
+      poolEntry({ rank: 1 }),
+      poolEntry({ rank: 2, bestChunk: "" }),
+    ];
+    const outcome = await runRerankingStage(
+      { pool, originalQuery: "q", intent: null },
+      ROUTE,
+      { transport, env: ENV },
+    );
+    // Nothing transmits and no blended scores appear: every result keeps
+    // one uniform score semantics (position scores).
+    expect(transport.calls).toHaveLength(0);
+    expect(outcome.report).toEqual({
+      status: "degraded",
+      reason: "payload_limit_exceeded",
+    });
+    expect(outcome.remoteRerankScores).toBeNull();
+    expect(outcome.warning?.retryable).toBe(false);
+    expect(outcome.warning?.message).toContain("Kept QMD fused order.");
+  });
+
   it("treats a deduplicating provider response as invalid and degrades", async () => {
     const transport = stubTransport(() => ({
       status: 200,
