@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "bin": {
-    "qmdx": "./dist/bin/qmdx.js"
+    "qmdx": "./dist/bin/qmdx.js",
+    "qmdx-bench": "./dist/bin/qmdx-bench.js"
   },
   "files": [
     "dist"
