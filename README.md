@@ -59,6 +59,17 @@ npm ci
 lockfile sync, the SDK pin against `scripts/sdk-policy.json`, and the native-module
 `allowScripts` entries.
 
+## Diagnostics persistence
+
+Deliberate spec deviation: the spec (see `docs/spec/qmdx-v1.md`, "Caching and
+diagnostics") describes *default persistent diagnostics* that are metadata-only.
+QMDX v1 implements this stricter than specified - **no diagnostics are persisted
+by default at all**. Persistence is opt-in: only when a diagnostics destination is
+explicitly configured does QMDX write anything, and even then records carry
+approved metadata only (an allowlist projection of the result envelope, with
+secret-value redaction), never query text, chunks, paths, credentials, or
+provider response bodies.
+
 ## No stable library API
 
 This package promises **no stable JavaScript or TypeScript library API**. The only stable
