@@ -5,7 +5,12 @@ import {
   type ReadinessCommandName,
 } from "../cli/readiness-command.js";
 import { invalidInvocationError, QmdxError } from "../core/errors.js";
-import { exitCodeForCategory } from "../core/exit-codes.js";
+import {
+  assessNodeRuntime,
+  unsupportedRuntimeMessage,
+  untestedRuntimeWarning,
+} from "../runtime/node-support.js";
+import { EXIT_CODES, exitCodeForCategory } from "../core/exit-codes.js";
 
 const USAGE = `Usage: qmdx <command> [options]
 
@@ -54,8 +59,33 @@ function commandOf(argv: readonly string[]):
   return { kind: "unknown", name };
 }
 
+function requestedJsonFormat(argv: readonly string[]): boolean {
+  const index = argv.indexOf("--format");
+  if (index !== -1) return argv[index + 1] === "json";
+  return argv.some((arg) => arg === "--format=json");
+}
+
+const argv = process.argv.slice(2);
+const runtime = assessNodeRuntime();
+if (!runtime.supported) {
+  process.stderr.write(`${unsupportedRuntimeMessage(runtime)}\n`);
+  process.exitCode = EXIT_CODES.invalidInvocationOrConfiguration;
+} else {
+  if (runtime.untestedEvenLts && !requestedJsonFormat(argv)) {
+    process.stderr.write(`${untestedRuntimeWarning(runtime)}\n`);
+  }
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof QmdxError ? error.message : String(error);
+      process.stderr.write(`qmdx: ${message}\n`);
+      process.exitCode = EXIT_CODES.unexpectedInternalFailure;
+    });
+}
+
 async function main(): Promise<number> {
-  const argv = process.argv.slice(2);
   const command = commandOf(argv);
   if (command.kind === "none" || command.kind === "unknown") {
     const error =
@@ -75,12 +105,3 @@ async function main(): Promise<number> {
   return runReadinessCommand(command.command, argv.slice(1));
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    const message = error instanceof QmdxError ? error.message : String(error);
-    process.stderr.write(`qmdx: ${message}\n`);
-    process.exitCode = 5;
-  });

@@ -155,6 +155,11 @@ export interface RunCliOptions {
   /** Additional environment variables for the child process. */
   env?: NodeJS.ProcessEnv;
   /**
+   * Entry JS to execute instead of the repo-built bin (for example the
+   * dist/bin/qmdx.js inside a packed-and-installed copy of the package).
+   */
+  binPath?: string;
+  /**
    * Launch the child with the deterministic fake-embed preload active at the
    * given vector width. Use a different width than the index was built with
    * to force vector-probe dimension incompatibility.
@@ -188,7 +193,7 @@ export function runCli(
   Object.assign(childEnv, options.env ?? {});
 
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN_PATH, ...args], {
+    const child = spawn(process.execPath, [options.binPath ?? BIN_PATH, ...args], {
       cwd,
       env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],

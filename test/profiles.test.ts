@@ -156,7 +156,15 @@ describe("config store", () => {
     expect(userConfigFilePath({ QMDX_CONFIG_DIR: "/tmp/cfg" })).toBe(
       join("/tmp/cfg", "config.json"),
     );
-    expect(userConfigDir({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "qmdx"));
+    const resolved = userConfigDir({
+      XDG_CONFIG_HOME: "/xdg",
+      APPDATA: "C:\\Users\\u\\AppData\\Roaming",
+    });
+    const expectedBase =
+      process.platform === "win32"
+        ? "C:\\Users\\u\\AppData\\Roaming"
+        : "/xdg";
+    expect(resolved).toBe(join(expectedBase, "qmdx"));
   });
 });
 
